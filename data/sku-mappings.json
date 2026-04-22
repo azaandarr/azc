@@ -1,0 +1,95 @@
+{
+  "_comment": "Maps user-friendly service names to Azure Retail Prices API serviceName values. Used by `azc price` to translate short queries like 'App Service P1v3' into the correct API filter. Keys are lowercase aliases; each entry can have multiple aliases.",
+  "services": {
+    "azure app service": {
+      "serviceName": "Azure App Service",
+      "aliases": ["app service", "app service plan", "serverfarm", "web app"],
+      "defaultPriceType": "Consumption",
+      "skuField": "armSkuName"
+    },
+    "virtual machines": {
+      "serviceName": "Virtual Machines",
+      "aliases": ["vm", "vms", "virtual machine", "compute"],
+      "defaultPriceType": "Consumption",
+      "skuField": "armSkuName"
+    },
+    "azure database for postgresql": {
+      "serviceName": "Azure Database for PostgreSQL",
+      "aliases": ["postgresql", "postgres", "pg", "postgresql flexible"],
+      "defaultPriceType": "Consumption",
+      "skuField": "armSkuName"
+    },
+    "storage accounts": {
+      "serviceName": "Storage",
+      "aliases": ["storage", "storage account", "blob", "blob storage"],
+      "defaultPriceType": "Consumption",
+      "skuField": "skuName"
+    },
+    "azure cosmos db": {
+      "serviceName": "Azure Cosmos DB",
+      "aliases": ["cosmos", "cosmos db", "cosmosdb", "documentdb"],
+      "defaultPriceType": "Consumption",
+      "skuField": "skuName"
+    },
+    "redis cache": {
+      "serviceName": "Redis Cache",
+      "aliases": ["redis", "redis cache", "azure cache for redis"],
+      "defaultPriceType": "Consumption",
+      "skuField": "skuName"
+    },
+    "key vault": {
+      "serviceName": "Key Vault",
+      "aliases": ["key vault", "keyvault", "kv"],
+      "defaultPriceType": "Consumption",
+      "skuField": "skuName"
+    },
+    "application insights": {
+      "serviceName": "Application Insights",
+      "aliases": ["app insights", "application insights", "appinsights"],
+      "defaultPriceType": "Consumption",
+      "skuField": "skuName"
+    },
+    "content delivery network": {
+      "serviceName": "Content Delivery Network",
+      "aliases": ["cdn", "content delivery network", "azure cdn"],
+      "defaultPriceType": "Consumption",
+      "skuField": "skuName"
+    },
+    "application gateway": {
+      "serviceName": "Application Gateway",
+      "aliases": ["app gateway", "application gateway", "appgw"],
+      "defaultPriceType": "Consumption",
+      "skuField": "skuName"
+    },
+    "sql database": {
+      "serviceName": "SQL Database",
+      "aliases": ["sql", "sql database", "azure sql", "sql db"],
+      "defaultPriceType": "Consumption",
+      "skuField": "skuName"
+    },
+    "service bus": {
+      "serviceName": "Service Bus",
+      "aliases": ["service bus", "servicebus"],
+      "defaultPriceType": "Consumption",
+      "skuField": "skuName"
+    },
+    "managed disks": {
+      "serviceName": "Managed Disks",
+      "aliases": ["managed disk", "managed disks", "disk", "disks"],
+      "defaultPriceType": "Consumption",
+      "skuField": "skuName"
+    },
+    "virtual network": {
+      "serviceName": "Virtual Network",
+      "aliases": ["public ip", "public ips", "vnet", "virtual network", "ip address"],
+      "defaultPriceType": "Consumption",
+      "skuField": "skuName"
+    },
+    "container registry": {
+      "serviceName": "Container Registry",
+      "aliases": ["container registry", "acr", "registry"],
+      "defaultPriceType": "Consumption",
+      "skuField": "skuName"
+    }
+  }
+}

@@ -1,0 +1,243 @@
+{
+  "_comment": "Realistic Resource Graph API responses for testing the SKU mapper. Each entry mirrors the shape returned by the Azure Resource Graph API for that resource type.",
+
+  "appServicePlan": {
+    "name": "prism-prod-plan",
+    "type": "Microsoft.Web/serverFarms",
+    "location": "uksouth",
+    "resourceGroup": "prism-prod-rg",
+    "kind": "linux",
+    "sku": {
+      "name": "P1v3",
+      "tier": "PremiumV3",
+      "size": "P1v3",
+      "family": "Pv3",
+      "capacity": 2
+    },
+    "properties": {
+      "reserved": true,
+      "maximumElasticWorkerCount": 1,
+      "isXenon": false,
+      "hyperV": false,
+      "targetWorkerCount": 0,
+      "targetWorkerSizeId": 0
+    }
+  },
+
+  "virtualMachine": {
+    "name": "build-agent-01",
+    "type": "Microsoft.Compute/virtualMachines",
+    "location": "uksouth",
+    "resourceGroup": "infra-rg",
+    "kind": "",
+    "sku": null,
+    "properties": {
+      "hardwareProfile": {
+        "vmSize": "Standard_D4s_v5"
+      },
+      "storageProfile": {
+        "osDisk": {
+          "osType": "Linux",
+          "diskSizeGB": 128
+        }
+      }
+    }
+  },
+
+  "postgresqlFlexible": {
+    "name": "prism-db",
+    "type": "Microsoft.DBforPostgreSQL/flexibleServers",
+    "location": "uksouth",
+    "resourceGroup": "prism-prod-rg",
+    "kind": "",
+    "sku": {
+      "name": "Standard_D2ds_v5",
+      "tier": "GeneralPurpose"
+    },
+    "properties": {
+      "storage": {
+        "storageSizeGB": 128,
+        "autoGrow": "Enabled"
+      },
+      "version": "15",
+      "state": "Ready"
+    }
+  },
+
+  "storageAccount": {
+    "name": "prismprodblobs",
+    "type": "Microsoft.Storage/storageAccounts",
+    "location": "uksouth",
+    "resourceGroup": "prism-prod-rg",
+    "kind": "StorageV2",
+    "sku": {
+      "name": "Standard_LRS",
+      "tier": "Standard"
+    },
+    "properties": {
+      "accessTier": "Hot"
+    }
+  },
+
+  "cosmosDb": {
+    "name": "prism-cosmos",
+    "type": "Microsoft.DocumentDB/databaseAccounts",
+    "location": "uksouth",
+    "resourceGroup": "prism-prod-rg",
+    "kind": "GlobalDocumentDB",
+    "sku": null,
+    "properties": {
+      "capabilities": [],
+      "databaseAccountOfferType": "Standard",
+      "consistencyPolicy": {
+        "defaultConsistencyLevel": "Session"
+      }
+    }
+  },
+
+  "cosmosDbServerless": {
+    "name": "prism-cosmos-dev",
+    "type": "Microsoft.DocumentDB/databaseAccounts",
+    "location": "uksouth",
+    "resourceGroup": "prism-dev-rg",
+    "kind": "GlobalDocumentDB",
+    "sku": null,
+    "properties": {
+      "capabilities": [
+        { "name": "EnableServerless" }
+      ],
+      "databaseAccountOfferType": "Standard"
+    }
+  },
+
+  "redisCache": {
+    "name": "prism-cache",
+    "type": "Microsoft.Cache/Redis",
+    "location": "uksouth",
+    "resourceGroup": "prism-prod-rg",
+    "kind": "",
+    "sku": {
+      "name": "C1",
+      "family": "C",
+      "capacity": 1,
+      "tier": "Standard"
+    },
+    "properties": {}
+  },
+
+  "keyVault": {
+    "name": "prism-kv",
+    "type": "Microsoft.KeyVault/vaults",
+    "location": "uksouth",
+    "resourceGroup": "prism-prod-rg",
+    "kind": "",
+    "sku": {
+      "name": "standard",
+      "family": "A"
+    },
+    "properties": {}
+  },
+
+  "applicationInsights": {
+    "name": "prism-insights",
+    "type": "Microsoft.Insights/components",
+    "location": "uksouth",
+    "resourceGroup": "prism-prod-rg",
+    "kind": "web",
+    "sku": null,
+    "properties": {
+      "Application_Type": "web",
+      "RetentionInDays": 90
+    }
+  },
+
+  "applicationGateway": {
+    "name": "prism-appgw",
+    "type": "Microsoft.Network/applicationGateways",
+    "location": "uksouth",
+    "resourceGroup": "prism-prod-rg",
+    "kind": "",
+    "sku": null,
+    "properties": {
+      "sku": {
+        "name": "Standard_v2",
+        "tier": "Standard_v2",
+        "capacity": 2
+      }
+    }
+  },
+
+  "sqlDatabase": {
+    "name": "prism-sql",
+    "type": "Microsoft.Sql/servers/databases",
+    "location": "uksouth",
+    "resourceGroup": "prism-prod-rg",
+    "kind": "v12.0,user",
+    "sku": {
+      "name": "GP_Gen5_2",
+      "tier": "GeneralPurpose",
+      "family": "Gen5",
+      "capacity": 2
+    },
+    "properties": {}
+  },
+
+  "serviceBus": {
+    "name": "prism-bus",
+    "type": "Microsoft.ServiceBus/namespaces",
+    "location": "uksouth",
+    "resourceGroup": "prism-prod-rg",
+    "kind": "",
+    "sku": {
+      "name": "Standard",
+      "tier": "Standard",
+      "capacity": 0
+    },
+    "properties": {}
+  },
+
+  "managedDisk": {
+    "name": "build-agent-01-osdisk",
+    "type": "Microsoft.Compute/disks",
+    "location": "uksouth",
+    "resourceGroup": "infra-rg",
+    "kind": "",
+    "sku": {
+      "name": "Premium_LRS",
+      "tier": "Premium"
+    },
+    "properties": {
+      "diskSizeGB": 128,
+      "diskState": "Attached"
+    }
+  },
+
+  "publicIp": {
+    "name": "prism-lb-ip",
+    "type": "Microsoft.Network/publicIPAddresses",
+    "location": "uksouth",
+    "resourceGroup": "prism-prod-rg",
+    "kind": "",
+    "sku": {
+      "name": "Standard",
+      "tier": "Regional"
+    },
+    "properties": {
+      "publicIPAllocationMethod": "Static",
+      "publicIPAddressVersion": "IPv4"
+    }
+  },
+
+  "containerRegistry": {
+    "name": "prismacr",
+    "type": "Microsoft.ContainerRegistry/registries",
+    "location": "uksouth",
+    "resourceGroup": "prism-prod-rg",
+    "kind": "",
+    "sku": {
+      "name": "Basic",
+      "tier": "Basic"
+    },
+    "properties": {}
+  }
+}

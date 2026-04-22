@@ -1,0 +1,36 @@
+{
+  "name": "@internal/azc",
+  "version": "0.1.0",
+  "description": "Azure Costing CLI — terminal-native Azure infrastructure cost estimator",
+  "main": "bin/azc.js",
+  "bin": {
+    "azc": "./bin/azc.js"
+  },
+  "scripts": {
+    "test": "node --test test/**/*.test.js",
+    "start": "node bin/azc.js",
+    "lint": "npx standard"
+  },
+  "keywords": [
+    "azure",
+    "cost",
+    "pricing",
+    "cli",
+    "infrastructure"
+  ],
+  "author": "Sca",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@azure/arm-resourcegraph": "^4.2.1",
+    "@azure/identity": "^4.5.0",
+    "@inquirer/prompts": "^7.0.0",
+    "chalk": "^4.1.2",
+    "cli-table3": "^0.6.5",
+    "commander": "^12.1.0",
+    "exceljs": "^4.4.0"
+  }
+}
