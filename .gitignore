@@ -1,1 +1,37 @@
-node_modules
+# Dependencies
+node_modules/
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor config
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Debug / logs
+npm-debug.log*
+*.log
+
+# Test output
+coverage/
+
+# Build artefacts (there's no build step, but just in case)
+dist/
+*.tgz
+
+# azc local data (user-specific, not project files)
+.azc/
+
+# Environment variables (should never be committed)
+.env
+.env.*
+
+# Dev prompts and internal notes (not for public repo)
+CLAUDE.md
+PROMPT-*.md
+.claude/
