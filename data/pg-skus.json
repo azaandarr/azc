@@ -1,0 +1,46 @@
+{
+  "_comment": "Azure Database for PostgreSQL Flexible Server SKUs grouped by tier for the interactive plan builder. Covers Burstable (B-series), General Purpose (D-series), and Memory Optimised (E-series).",
+  "families": [
+    {
+      "name": "Burstable (B-series)",
+      "description": "Burstable (dev/test)",
+      "skus": [
+        { "sku": "Standard_B1ms",  "vcpus": 1, "ramGB": 2,  "category": "burstable" },
+        { "sku": "Standard_B2s",   "vcpus": 2, "ramGB": 4,  "category": "burstable" },
+        { "sku": "Standard_B2ms",  "vcpus": 2, "ramGB": 8,  "category": "burstable" },
+        { "sku": "Standard_B4ms",  "vcpus": 4, "ramGB": 16, "category": "burstable" }
+      ]
+    },
+    {
+      "name": "General Purpose (D-series v5)",
+      "description": "General Purpose",
+      "skus": [
+        { "sku": "Standard_D2ds_v5",  "vcpus": 2,  "ramGB": 8,   "category": "general" },
+        { "sku": "Standard_D4ds_v5",  "vcpus": 4,  "ramGB": 16,  "category": "general" },
+        { "sku": "Standard_D8ds_v5",  "vcpus": 8,  "ramGB": 32,  "category": "general" },
+        { "sku": "Standard_D16ds_v5", "vcpus": 16, "ramGB": 64,  "category": "general" },
+        { "sku": "Standard_D32ds_v5", "vcpus": 32, "ramGB": 128, "category": "general" }
+      ]
+    },
+    {
+      "name": "General Purpose (D-series v4)",
+      "description": "General Purpose, previous gen",
+      "skus": [
+        { "sku": "Standard_D2ds_v4",  "vcpus": 2,  "ramGB": 8,  "category": "general" },
+        { "sku": "Standard_D4ds_v4",  "vcpus": 4,  "ramGB": 16, "category": "general" },
+        { "sku": "Standard_D8ds_v4",  "vcpus": 8,  "ramGB": 32, "category": "general" },
+        { "sku": "Standard_D16ds_v4", "vcpus": 16, "ramGB": 64, "category": "general" }
+      ]
+    },
+    {
+      "name": "Memory Optimised (E-series v5)",
+      "description": "Memory Optimised",
+      "skus": [
+        { "sku": "Standard_E2ds_v5",  "vcpus": 2,  "ramGB": 16,  "category": "memory" },
+        { "sku": "Standard_E4ds_v5",  "vcpus": 4,  "ramGB": 32,  "category": "memory" },
+        { "sku": "Standard_E8ds_v5",  "vcpus": 8,  "ramGB": 64,  "category": "memory" },
+        { "sku": "Standard_E16ds_v5", "vcpus": 16, "ramGB": 128, "category": "memory" }
+      ]
+    }
+  ]
+}

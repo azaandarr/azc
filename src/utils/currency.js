@@ -78,8 +78,34 @@ function formatDelta(oldValue, newValue) {
   return `${sign}${pct.toFixed(1)}%`;
 }
 
+/**
+ * Format a currency amount in compact notation for summaries and running totals.
+ * Uses K/M suffixes for large numbers: £1.3k, £12.4k, £1.2M.
+ * NOT for detailed tables — those should use formatMoney for 2dp precision.
+ * @param {number} amount     - The raw numeric amount
+ * @param {string} [currency] - Currency code: 'GBP', 'USD', or 'EUR'. Defaults to 'GBP'.
+ * @returns {string} Compact currency string
+ */
+function formatCompact(amount, currency = 'GBP') {
+  const code = currency.toUpperCase();
+  const cfg = CURRENCY_CONFIG[code] || { symbol: code + ' ' };
+  const symbol = cfg.symbol;
+
+  const abs = Math.abs(amount);
+  const sign = amount < 0 ? '-' : '';
+
+  if (abs >= 1000000) {
+    return `${sign}${symbol}${(abs / 1000000).toFixed(1)}M`;
+  }
+  if (abs >= 1000) {
+    return `${sign}${symbol}${(abs / 1000).toFixed(1)}k`;
+  }
+  return formatMoney(amount, currency);
+}
+
 module.exports = {
   formatMoney,
+  formatCompact,
   hourlyToMonthly,
   monthlyToAnnual,
   formatDelta,

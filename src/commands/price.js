@@ -5,17 +5,21 @@
 // Parses a free-text query like "App Service P1v3" into the correct API filter
 // by resolving the service name against sku-mappings.json aliases, then treating
 // the remaining words as the SKU identifier.
+//
+// Also supports fuzzy input: "d4s v5" auto-detects as a VM SKU, and
+// "4 vcpu 16gb" searches vm-skus.json for a spec match.
 
 const path = require('path');
 const config = require('../config/config');
 const logger = require('../utils/logger');
 const { lookupPrice } = require('../services/retail-prices');
-const { renderPriceLookup } = require('../formatters/table');
+const { renderPriceLookup, renderServiceOverview } = require('../formatters/table');
 const { createSpinner } = require('../utils/spinner');
+const { hourlyToMonthly, formatMoney } = require('../utils/currency');
 
 // Load the static service alias mappings at module load time.
-// This is a small JSON file so the cost is negligible.
 const skuMappings = require(path.join(__dirname, '../../data/sku-mappings.json'));
+const vmSkus = require(path.join(__dirname, '../../data/vm-skus.json'));
 
 /**
  * Parse a free-text price query into a service name and SKU.
@@ -69,6 +73,68 @@ function parseQuery(query) {
 }
 
 /**
+ * Try to resolve an ambiguous/fuzzy query that doesn't match any service alias.
+ * Handles cases like:
+ *   - "d4s v5" → detects VM SKU pattern, auto-prepends "Standard_"
+ *   - "4 vcpu 16gb" → searches vm-skus.json for a spec match
+ *
+ * @param {string} query - The raw user query that failed parseQuery
+ * @returns {{ serviceName: string, sku: string, skuField: string, suggestion: string } | null}
+ */
+function resolveAmbiguousQuery(query) {
+  const lower = query.trim().toLowerCase().replace(/\s+/g, '');
+
+  // Pattern 1: looks like a VM SKU without "Standard_" prefix
+  // Matches patterns like "d4sv5", "d4s_v5", "d4s v5", "e8sv5", "b2ms", "f4sv2"
+  const vmPattern = /^([debflnc]\d+[a-z]*s?_?v?\d*)$/i;
+  const normalized = query.trim().replace(/\s+/g, '').toLowerCase();
+  const vmMatch = normalized.match(vmPattern);
+
+  if (vmMatch) {
+    // Reconstruct as "Standard_XYZ_vN" format
+    const raw = vmMatch[1].replace(/_/g, '');
+    const candidate = 'Standard_' + raw.replace(/v(\d+)$/i, '_v$1');
+    // Try to find it in vm-skus.json to confirm it's valid
+    const allVmSkus = vmSkus.families.flatMap((f) => f.skus);
+    const found = allVmSkus.find((s) => s.sku.toLowerCase().replace(/\s+/g, '') === candidate.toLowerCase().replace(/\s+/g, ''));
+    if (found) {
+      return {
+        serviceName: 'Virtual Machines',
+        sku: found.sku,
+        skuField: 'armSkuName',
+        suggestion: `Detected as VM: ${found.sku} (${found.vcpus} vCPU, ${found.ramGB} GB RAM)`,
+      };
+    }
+    // Even if not in our data file, try it — the API might have it
+    return {
+      serviceName: 'Virtual Machines',
+      sku: 'Standard_' + query.trim().replace(/\s+/g, '').replace(/v(\d+)$/i, '_v$1'),
+      skuField: 'armSkuName',
+      suggestion: `Looks like a VM SKU — trying as Standard_${query.trim().replace(/\s+/g, '')}`,
+    };
+  }
+
+  // Pattern 2: spec-based lookup — "4 vcpu 16gb" or "4vcpu 16gb"
+  const specMatch = lower.match(/(\d+)\s*v?cpus?\s*(\d+)\s*g(?:b|igabytes?)?/);
+  if (specMatch) {
+    const targetCpus = parseInt(specMatch[1], 10);
+    const targetRam = parseInt(specMatch[2], 10);
+    const allVmSkus = vmSkus.families.flatMap((f) => f.skus);
+    const found = allVmSkus.find((s) => s.vcpus === targetCpus && s.ramGB === targetRam);
+    if (found) {
+      return {
+        serviceName: 'Virtual Machines',
+        sku: found.sku,
+        skuField: 'armSkuName',
+        suggestion: `Matched: ${found.sku} (${found.vcpus} vCPU, ${found.ramGB} GB RAM)`,
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
  * Register the price command on the parent commander program.
  * @param {import('commander').Command} program
  */
@@ -82,7 +148,16 @@ module.exports = function registerPriceCommand(program) {
     .option('-c, --currency <code>', 'Currency code: GBP, USD, EUR', config.getDefault('currency'))
     .action(async (query, opts) => {
       // Parse the free-text query into service name + SKU
-      const parsed = parseQuery(query);
+      let parsed = parseQuery(query);
+
+      // If standard parsing fails, try fuzzy resolution
+      if (!parsed) {
+        const fuzzy = resolveAmbiguousQuery(query);
+        if (fuzzy) {
+          logger.dim(fuzzy.suggestion);
+          parsed = fuzzy;
+        }
+      }
 
       if (!parsed) {
         logger.error(
@@ -95,12 +170,6 @@ module.exports = function registerPriceCommand(program) {
       }
 
       // Build the API filter parameters.
-      // The Retail Prices API is inconsistent about which field holds the SKU —
-      // some services use armSkuName, others use skuName, and the format often
-      // differs from what users type (e.g. "P1v3" vs "P1 v3"). So we:
-      // 1. First try the service's preferred skuField
-      // 2. If that returns nothing, try a broader query without the SKU filter
-      //    and post-filter by matching skuName/armSkuName/meterName client-side
       const params = {
         serviceName: parsed.serviceName,
         armRegionName: opts.region,
@@ -118,15 +187,13 @@ module.exports = function registerPriceCommand(program) {
           const exactParams = { ...params, [parsed.skuField]: parsed.sku };
           items = await lookupPrice(exactParams);
 
-          // If exact match returned nothing, fetch all prices for this service
-          // in this region and do a fuzzy client-side match on the SKU
+          // If exact match returned nothing, fetch all prices and fuzzy-match
           if (items.length === 0) {
             spinner.update(`Broadening search for ${parsed.serviceName}...`);
             const allItems = await lookupPrice(params);
             const skuLower = parsed.sku.toLowerCase().replace(/\s+/g, '');
 
             items = allItems.filter((item) => {
-              // Normalize both sides: strip spaces so "P1 v3" matches "P1v3"
               const skuName = (item.skuName || '').toLowerCase().replace(/\s+/g, '');
               const armSku = (item.armSkuName || '').toLowerCase().replace(/\s+/g, '');
               const meter = (item.meterName || '').toLowerCase().replace(/\s+/g, '');
@@ -138,9 +205,7 @@ module.exports = function registerPriceCommand(program) {
           items = await lookupPrice(params);
         }
 
-        // Post-filter for OS — applies to VMs and App Service.
-        // Match on "linux" in productName explicitly (not absence of "windows")
-        // because some Windows products omit "Windows" from their productName.
+        // Post-filter for OS
         let filtered = items;
         if (opts.os) {
           const osLower = opts.os.toLowerCase();
@@ -154,13 +219,32 @@ module.exports = function registerPriceCommand(program) {
 
         spinner.stop(`Found ${filtered.length} price entries`);
 
-        // Render the results as a formatted table
-        renderPriceLookup({
-          query: `${parsed.serviceName} ${parsed.sku}`.trim(),
-          region: opts.region,
-          currency: opts.currency,
-          items: filtered,
-        });
+        // If no specific SKU was given, show a service overview table instead
+        if (!parsed.sku && filtered.length > 0) {
+          renderServiceOverview({
+            serviceName: parsed.serviceName,
+            region: opts.region,
+            currency: opts.currency,
+            os: opts.os,
+            items: filtered,
+          });
+        } else {
+          // Render the results as a formatted table
+          renderPriceLookup({
+            query: `${parsed.serviceName} ${parsed.sku}`.trim(),
+            region: opts.region,
+            currency: opts.currency,
+            items: filtered,
+          });
+        }
+
+        // Contextual tip at the end
+        logger.spacer();
+        if (parsed.sku) {
+          logger.dim('Tip: azc compare --subscription <sub> --with "' + parsed.serviceName.split(' ')[0] + ':' + parsed.sku + '" to see the cost impact');
+        } else {
+          logger.dim('Tip: azc price "' + parsed.serviceName.split(' ').slice(0, 2).join(' ').toLowerCase() + ' <sku>" for detailed pricing on a specific SKU');
+        }
       } catch (err) {
         spinner.fail('Price lookup failed');
         logger.error(
@@ -174,3 +258,4 @@ module.exports = function registerPriceCommand(program) {
 
 // Export parseQuery for testing
 module.exports.parseQuery = parseQuery;
+module.exports.resolveAmbiguousQuery = resolveAmbiguousQuery;

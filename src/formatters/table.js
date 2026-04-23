@@ -328,9 +328,113 @@ function formatReservedMonthly(reservedMonthly, paygMonthly, currency) {
   return chalk.green(formatted);
 }
 
+/**
+ * Render a service overview table when `azc price` is called without a specific SKU.
+ * Groups results by distinct skuName, shows one row per SKU with monthly estimate
+ * and % difference from the cheapest option.
+ *
+ * @param {object} params
+ * @param {string} params.serviceName - Azure service name
+ * @param {string} params.region      - Azure region
+ * @param {string} params.currency    - Currency code
+ * @param {string} params.os          - OS filter (linux/windows)
+ * @param {Array<object>} params.items - Price items from the Retail Prices API
+ */
+function renderServiceOverview({ serviceName, region, currency, os, items }) {
+  logger.spacer();
+  logger.header(`${coral(serviceName)} — ${region}, ${os || 'all'}, ${currency}`);
+  logger.spacer();
+
+  // Only show Consumption items for the overview
+  const consumption = items.filter((i) => i.type === 'Consumption');
+
+  // Filter out Spot and Low Priority
+  const filtered = consumption.filter((item) => {
+    const meter = (item.meterName || '').toLowerCase();
+    const sku = (item.skuName || '').toLowerCase();
+    return !meter.includes('spot') && !meter.includes('low priority') &&
+           !sku.includes('spot') && !sku.includes('low priority');
+  });
+
+  if (filtered.length === 0) {
+    logger.warn('No consumption pricing data found for this service.');
+    return;
+  }
+
+  // Group by skuName, taking the first item per group
+  const skuMap = new Map();
+  for (const item of filtered) {
+    const key = item.skuName || item.armSkuName || item.meterName || '';
+    if (!skuMap.has(key)) {
+      skuMap.set(key, item);
+    }
+  }
+
+  // Calculate monthly estimates and sort by price
+  const rows = [];
+  for (const [skuName, item] of skuMap) {
+    const monthly = estimateMonthly(item.retailPrice, item.unitOfMeasure);
+    if (monthly !== null && monthly > 0) {
+      rows.push({ skuName, monthly, item });
+    }
+  }
+  rows.sort((a, b) => a.monthly - b.monthly);
+
+  // Limit to the top 15 most common SKUs to keep the table readable
+  const displayRows = rows.slice(0, 15);
+  const cheapest = displayRows.length > 0 ? displayRows[0].monthly : 0;
+
+  // Find matching reservations
+  const reserved1yr = items.filter((i) => i.type === 'Reservation' && i.reservationTerm === '1 Year');
+  const reserved3yr = items.filter((i) => i.type === 'Reservation' && i.reservationTerm === '3 Years');
+
+  const table = new Table({
+    head: [
+      chalk.dim('SKU'),
+      chalk.dim('Monthly'),
+      chalk.dim('vs cheapest'),
+      chalk.dim('Annual'),
+      chalk.dim('1yr RI'),
+      chalk.dim('3yr RI'),
+    ],
+    style: { head: [], border: ['dim'] },
+    colAligns: ['left', 'right', 'right', 'right', 'right', 'right'],
+  });
+
+  for (const row of displayRows) {
+    const pctDiff = cheapest > 0 && row.monthly > cheapest
+      ? chalk.dim(`+${(((row.monthly - cheapest) / cheapest) * 100).toFixed(0)}%`)
+      : chalk.dim('—');
+
+    // Find matching RI prices
+    const match1yr = reserved1yr.find((r) => matchesReservation(row.item, r));
+    const match3yr = reserved3yr.find((r) => matchesReservation(row.item, r));
+    const ri1 = match1yr ? chalk.green(formatMoney(match1yr.retailPrice / 12, currency)) : chalk.dim('—');
+    const ri3 = match3yr ? chalk.green(formatMoney(match3yr.retailPrice / 36, currency)) : chalk.dim('—');
+
+    table.push([
+      chalk.blue(row.skuName),
+      chalk.green(formatMoney(row.monthly, currency)),
+      pctDiff,
+      chalk.green(formatMoney(monthlyToAnnual(row.monthly), currency)),
+      ri1,
+      ri3,
+    ]);
+  }
+
+  logger.raw(table.toString() + '\n');
+
+  if (rows.length > displayRows.length) {
+    logger.dim(`  Showing top ${displayRows.length} of ${rows.length} SKUs`);
+  }
+
+  logger.spacer();
+}
+
 module.exports = {
   renderPriceLookup,
   renderScanResult,
   renderComparison,
+  renderServiceOverview,
   estimateMonthly,
 };

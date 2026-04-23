@@ -53,8 +53,26 @@ function initConfigDir() {
 
   if (!fs.existsSync(CONFIG_PATH)) {
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(DEFAULT_CONFIG, null, 2), 'utf8');
-    logger.dim(`Created config at ${CONFIG_PATH}`);
-    logger.dim('Edit this file to set your default region, currency, and subscription aliases.');
+
+    // First-run welcome box
+    const lines = [
+      '  Welcome to azc — Azure costing from your terminal.  ',
+      '',
+      '  Quick start:',
+      '    azc price "app service p1v3"    price lookup',
+      '    azc plan --interactive          build an estimate',
+      '    azc scan -s <sub-id>            scan a subscription',
+      '',
+      `  Config saved to ${CONFIG_PATH}`,
+    ];
+    const width = Math.max(...lines.map((l) => l.length)) + 2;
+    logger.raw('\n');
+    logger.raw('  ┌' + '─'.repeat(width) + '┐\n');
+    for (const line of lines) {
+      logger.raw('  │' + line.padEnd(width) + '│\n');
+    }
+    logger.raw('  └' + '─'.repeat(width) + '┘\n');
+    logger.raw('\n');
   }
 }
 

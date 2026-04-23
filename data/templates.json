@@ -1,0 +1,42 @@
+{
+  "_comment": "Pre-built templates for azc plan --quick. Each template defines a common infrastructure pattern with resources, SKUs, and a price hint. Prices are looked up live — the hint is just for the menu display.",
+  "templates": [
+    {
+      "name": "Basic Web App",
+      "description": "App Service B1 + PostgreSQL B1ms",
+      "priceHint": "~£32/mo",
+      "resources": [
+        { "service": "App Service Plan", "serviceName": "Azure App Service", "sku": "B1", "os": "linux" },
+        { "service": "PostgreSQL Flexible Server", "serviceName": "Azure Database for PostgreSQL", "sku": "Standard_B1ms" }
+      ]
+    },
+    {
+      "name": "Production Web App",
+      "description": "App Service P1v3 + PostgreSQL D2ds_v5",
+      "priceHint": "~£290/mo",
+      "resources": [
+        { "service": "App Service Plan", "serviceName": "Azure App Service", "sku": "P1v3", "os": "linux" },
+        { "service": "PostgreSQL Flexible Server", "serviceName": "Azure Database for PostgreSQL", "sku": "Standard_D2ds_v5" }
+      ]
+    },
+    {
+      "name": "Microservices",
+      "description": "App Service P1v3 x2 + Redis C1 + Service Bus Standard",
+      "priceHint": "~£240/mo",
+      "resources": [
+        { "service": "App Service Plan", "serviceName": "Azure App Service", "sku": "P1v3", "os": "linux", "instances": 2 },
+        { "service": "Redis Cache", "serviceName": "Redis Cache", "sku": "C1", "tier": "Standard" },
+        { "service": "Service Bus", "serviceName": "Service Bus", "sku": "Standard" }
+      ]
+    },
+    {
+      "name": "Data Platform",
+      "description": "PostgreSQL D4ds_v5 + Redis P1",
+      "priceHint": "~£600/mo",
+      "resources": [
+        { "service": "PostgreSQL Flexible Server", "serviceName": "Azure Database for PostgreSQL", "sku": "Standard_D4ds_v5" },
+        { "service": "Redis Cache", "serviceName": "Redis Cache", "sku": "P1", "tier": "Premium" }
+      ]
+    }
+  ]
+}

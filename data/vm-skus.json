@@ -1,0 +1,99 @@
+{
+  "_comment": "Common Azure VM SKUs grouped by family for the interactive plan builder. Covers ~50 realistic choices a platform engineer would make. Each entry includes vCPU/RAM specs so the picker can show them inline.",
+  "families": [
+    {
+      "name": "D-series v5 (General Purpose)",
+      "description": "General Purpose",
+      "skus": [
+        { "sku": "Standard_D2s_v5",  "vcpus": 2,  "ramGB": 8,   "category": "general" },
+        { "sku": "Standard_D4s_v5",  "vcpus": 4,  "ramGB": 16,  "category": "general" },
+        { "sku": "Standard_D8s_v5",  "vcpus": 8,  "ramGB": 32,  "category": "general" },
+        { "sku": "Standard_D16s_v5", "vcpus": 16, "ramGB": 64,  "category": "general" },
+        { "sku": "Standard_D32s_v5", "vcpus": 32, "ramGB": 128, "category": "general" }
+      ]
+    },
+    {
+      "name": "D-series v5 AMD (General Purpose, Cost-Optimised)",
+      "description": "General Purpose, cheaper",
+      "skus": [
+        { "sku": "Standard_D2as_v5",  "vcpus": 2,  "ramGB": 8,   "category": "general" },
+        { "sku": "Standard_D4as_v5",  "vcpus": 4,  "ramGB": 16,  "category": "general" },
+        { "sku": "Standard_D8as_v5",  "vcpus": 8,  "ramGB": 32,  "category": "general" },
+        { "sku": "Standard_D16as_v5", "vcpus": 16, "ramGB": 64,  "category": "general" },
+        { "sku": "Standard_D32as_v5", "vcpus": 32, "ramGB": 128, "category": "general" },
+        { "sku": "Standard_D48as_v5", "vcpus": 48, "ramGB": 192, "category": "general" }
+      ]
+    },
+    {
+      "name": "D-series v4 (General Purpose, Previous Gen)",
+      "description": "General Purpose, previous gen",
+      "skus": [
+        { "sku": "Standard_D2ds_v4",  "vcpus": 2,  "ramGB": 8,   "category": "general" },
+        { "sku": "Standard_D4ds_v4",  "vcpus": 4,  "ramGB": 16,  "category": "general" },
+        { "sku": "Standard_D8ds_v4",  "vcpus": 8,  "ramGB": 32,  "category": "general" },
+        { "sku": "Standard_D16ds_v4", "vcpus": 16, "ramGB": 64,  "category": "general" }
+      ]
+    },
+    {
+      "name": "E-series v5 (Memory Optimised)",
+      "description": "Memory Optimised",
+      "skus": [
+        { "sku": "Standard_E2s_v5",  "vcpus": 2,  "ramGB": 16,  "category": "memory" },
+        { "sku": "Standard_E4s_v5",  "vcpus": 4,  "ramGB": 32,  "category": "memory" },
+        { "sku": "Standard_E8s_v5",  "vcpus": 8,  "ramGB": 64,  "category": "memory" },
+        { "sku": "Standard_E16s_v5", "vcpus": 16, "ramGB": 128, "category": "memory" },
+        { "sku": "Standard_E32s_v5", "vcpus": 32, "ramGB": 256, "category": "memory" }
+      ]
+    },
+    {
+      "name": "E-series v5 AMD (Memory Optimised, Cost-Optimised)",
+      "description": "Memory Optimised, cheaper",
+      "skus": [
+        { "sku": "Standard_E2as_v5",  "vcpus": 2,  "ramGB": 16,  "category": "memory" },
+        { "sku": "Standard_E4as_v5",  "vcpus": 4,  "ramGB": 32,  "category": "memory" },
+        { "sku": "Standard_E8as_v5",  "vcpus": 8,  "ramGB": 64,  "category": "memory" },
+        { "sku": "Standard_E16as_v5", "vcpus": 16, "ramGB": 128, "category": "memory" }
+      ]
+    },
+    {
+      "name": "B-series v2 (Burstable)",
+      "description": "Burstable (dev/test)",
+      "skus": [
+        { "sku": "Standard_B1s",  "vcpus": 1, "ramGB": 1,  "category": "burstable" },
+        { "sku": "Standard_B1ms", "vcpus": 1, "ramGB": 2,  "category": "burstable" },
+        { "sku": "Standard_B2s",  "vcpus": 2, "ramGB": 4,  "category": "burstable" },
+        { "sku": "Standard_B2ms", "vcpus": 2, "ramGB": 8,  "category": "burstable" },
+        { "sku": "Standard_B4ms", "vcpus": 4, "ramGB": 16, "category": "burstable" },
+        { "sku": "Standard_B8ms", "vcpus": 8, "ramGB": 32, "category": "burstable" }
+      ]
+    },
+    {
+      "name": "F-series v2 (Compute Optimised)",
+      "description": "Compute Optimised",
+      "skus": [
+        { "sku": "Standard_F2s_v2",  "vcpus": 2,  "ramGB": 4,   "category": "compute" },
+        { "sku": "Standard_F4s_v2",  "vcpus": 4,  "ramGB": 8,   "category": "compute" },
+        { "sku": "Standard_F8s_v2",  "vcpus": 8,  "ramGB": 16,  "category": "compute" },
+        { "sku": "Standard_F16s_v2", "vcpus": 16, "ramGB": 32,  "category": "compute" }
+      ]
+    },
+    {
+      "name": "L-series v3 (Storage Optimised)",
+      "description": "Storage Optimised",
+      "skus": [
+        { "sku": "Standard_L8s_v3",  "vcpus": 8,  "ramGB": 64,  "category": "storage" },
+        { "sku": "Standard_L16s_v3", "vcpus": 16, "ramGB": 128, "category": "storage" },
+        { "sku": "Standard_L32s_v3", "vcpus": 32, "ramGB": 256, "category": "storage" }
+      ]
+    },
+    {
+      "name": "NC-series v3 (GPU, NVIDIA V100)",
+      "description": "GPU (AI/ML)",
+      "skus": [
+        { "sku": "Standard_NC6s_v3",  "vcpus": 6,  "ramGB": 112, "category": "gpu" },
+        { "sku": "Standard_NC12s_v3", "vcpus": 12, "ramGB": 224, "category": "gpu" },
+        { "sku": "Standard_NC24s_v3", "vcpus": 24, "ramGB": 448, "category": "gpu" }
+      ]
+    }
+  ]
+}

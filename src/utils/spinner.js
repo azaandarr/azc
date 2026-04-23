@@ -60,13 +60,17 @@ function createSpinner(initialMessage = '') {
     },
 
     /**
-     * Show progress as "[current/total] message".
+     * Show progress as a visual bar: [████░░░░] 3/10  message
      * @param {number} current - Current item number
      * @param {number} total   - Total items
      * @param {string} msg     - Description of current item
      */
     progress(current, total, msg) {
-      message = `[${current}/${total}] ${msg}`;
+      const barWidth = 16;
+      const filled = Math.round((current / total) * barWidth);
+      const empty = barWidth - filled;
+      const bar = '█'.repeat(filled) + '░'.repeat(empty);
+      message = `[${bar}] ${current}/${total}  ${msg}`;
     },
 
     /**

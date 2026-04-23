@@ -171,6 +171,11 @@ module.exports = function registerScanCommand(program) {
         renderScanResult(scanData);
       }
 
+      // ── Contextual tip ─────────────────────────────────────────
+      if (opts.format !== 'json') {
+        logger.dim('Tip: azc compare -s ' + opts.subscription + ' to interactively re-spec a resource');
+      }
+
       // ── Step 9: Export to file if requested ─────────────────────
       if (opts.out) {
         const ext = path.extname(opts.out).toLowerCase();
