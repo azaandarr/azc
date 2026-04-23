@@ -20,8 +20,9 @@ const { validate } = require('../auth/credential');
 const { queryResources } = require('../services/resource-graph');
 const { mapResource, isSupported } = require('../services/sku-mapper');
 const { lookupPrice } = require('../services/retail-prices');
-const { renderScanResult, renderScanResultGrouped } = require('../formatters/table');
-const { buildScanJson } = require('../formatters/json');
+const { renderScanResult, renderScanResultGrouped, renderRiRecommendations } = require('../formatters/table');
+const { buildScanJson, buildRiJson } = require('../formatters/json');
+const { getRecommendations } = require('../services/ri-advisor');
 const { exportToXlsx } = require('../formatters/xlsx');
 const { createSpinner } = require('../utils/spinner');
 const { hourlyToMonthly } = require('../utils/currency');
@@ -42,6 +43,7 @@ module.exports = function registerScanCommand(program) {
     .option('-c, --currency <code>', 'Currency code: GBP, USD, EUR', config.getDefault('currency'))
     .option('--group', 'Group identical resource types in output (default)', true)
     .option('--no-group', 'Show flat per-resource table')
+    .option('--no-ri', 'Skip reserved instance recommendations')
     .action(async (opts) => {
       // ── Step 1: Validate Azure credentials ──────────────────────
       const authSpinner = createSpinner('Authenticating with Azure...');
@@ -173,6 +175,31 @@ module.exports = function registerScanCommand(program) {
         renderScanResultGrouped(scanData);
       } else {
         renderScanResult(scanData);
+      }
+
+      // ── Step 10: Reserved instance recommendations ────────────
+      if (opts.ri !== false) {
+        const riEligible = pricedResources.filter((r) => !r.usageBased && r.monthlyCost > 0);
+        if (riEligible.length > 0) {
+          const riSpinner = createSpinner('Checking reserved instance pricing...');
+          riSpinner.start();
+
+          const recommendations = await getRecommendations(riEligible, {
+            region: opts.region,
+            currency: opts.currency,
+          });
+
+          riSpinner.stop(`${recommendations.length} RI-eligible resource(s)`);
+
+          if (recommendations.length > 0) {
+            if (opts.format === 'json') {
+              const riJson = buildRiJson(recommendations);
+              logger.raw(JSON.stringify({ reservedInstanceSavings: riJson }, null, 2) + '\n');
+            } else {
+              renderRiRecommendations(recommendations, opts.currency);
+            }
+          }
+        }
       }
 
       // ── Contextual tip ─────────────────────────────────────────

@@ -25,6 +25,9 @@ const {
   parseInlineResource,
   NUMBERED_THEME,
 } = require('../utils/sku-picker');
+const { getRecommendations } = require('../services/ri-advisor');
+const { renderRiRecommendations } = require('../formatters/table');
+const { buildRiJson } = require('../formatters/json');
 
 // MRU (most recently used) file path — lightweight memory of last choices
 const MRU_PATH = path.join(AZC_HOME, 'mru.json');
@@ -309,6 +312,7 @@ module.exports = function registerPlanCommand(program) {
     .option('-f, --format <type>', 'Output format: table or json', config.getDefault('format'))
     .option('-o, --out <file>', 'Export to file (.json or .xlsx)')
     .option('-q, --quick', 'Start from a pre-built template')
+    .option('--no-ri', 'Skip reserved instance recommendations')
     .action(async (inlineResources, opts) => {
       // Lazy-load inquirer — heavy dependency, only needed for interactive mode
       const { select, input, confirm, number } = require('@inquirer/prompts');
@@ -728,6 +732,40 @@ module.exports = function registerPlanCommand(program) {
       }
 
       outputEstimate(items, region, currency, opts);
+
+      // ── Reserved instance recommendations ───────────────────
+      if (opts.ri !== false) {
+        const riEligible = items.filter((i) => i.monthlyCost > 0 && !i.notes?.includes('usage-based'));
+        if (riEligible.length > 0) {
+          // Map plan items to the shape ri-advisor expects
+          const riResources = riEligible.map((i) => ({
+            name: i.service,
+            service: i.service,
+            sku: i.sku,
+            monthlyCost: i.monthlyCost,
+          }));
+
+          const riSpinner = createSpinner('Checking reserved instance pricing...');
+          riSpinner.start();
+
+          const recommendations = await getRecommendations(riResources, {
+            region,
+            currency,
+          });
+
+          riSpinner.stop(`${recommendations.length} RI-eligible resource(s)`);
+
+          if (recommendations.length > 0) {
+            if (opts.format === 'json') {
+              const riJson = buildRiJson(recommendations);
+              logger.raw(JSON.stringify({ reservedInstanceSavings: riJson }, null, 2) + '\n');
+            } else {
+              renderRiRecommendations(recommendations, currency);
+            }
+          }
+        }
+      }
+
       await saveAndExport(items, region, currency, opts, mru);
     });
 };

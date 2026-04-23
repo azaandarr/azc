@@ -58,6 +58,8 @@ require('../src/commands/price')(program);
 require('../src/commands/compare')(program);
 require('../src/commands/plan')(program);
 require('../src/commands/config-cmd')(program);
+require('../src/commands/doctor')(program);
+require('../src/commands/completion')(program);
 
 // ─── Parse and run ──────────────────────────────────────────────────
 // parseAsync() handles the async action handlers in our commands.

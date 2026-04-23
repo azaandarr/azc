@@ -122,6 +122,64 @@ function buildPlanJson({ region, currency, items }) {
   };
 }
 
+/**
+ * Build a structured JSON object from RI recommendations.
+ *
+ * @param {Array<object>} recommendations - From ri-advisor.getRecommendations()
+ * @returns {object}
+ */
+function buildRiJson(recommendations) {
+  let totalCurrent = 0;
+  let totalRi1yr = 0;
+  let totalRi3yr = 0;
+
+  const recs = recommendations.map((r) => {
+    totalCurrent += r.currentMonthly;
+    const ri1 = r.ri1yrMonthly;
+    const ri3 = r.ri3yrMonthly;
+    totalRi1yr += ri1 != null ? ri1 : r.currentMonthly;
+    totalRi3yr += ri3 != null ? ri3 : r.currentMonthly;
+
+    const entry = {
+      name: r.name,
+      sku: r.sku,
+      currentMonthly: round2(r.currentMonthly),
+    };
+
+    if (ri1 != null) {
+      const save1 = r.currentMonthly - ri1;
+      entry.ri1yr = {
+        monthly: round2(ri1),
+        savingsMonthly: round2(save1),
+        savingsPercent: round1(r.currentMonthly > 0 ? (save1 / r.currentMonthly) * 100 : 0),
+      };
+    }
+
+    if (ri3 != null) {
+      const save3 = r.currentMonthly - ri3;
+      entry.ri3yr = {
+        monthly: round2(ri3),
+        savingsMonthly: round2(save3),
+        savingsPercent: round1(r.currentMonthly > 0 ? (save3 / r.currentMonthly) * 100 : 0),
+      };
+    }
+
+    return entry;
+  });
+
+  return {
+    eligibleResources: recommendations.length,
+    recommendations: recs,
+    totals: {
+      currentMonthly: round2(totalCurrent),
+      ri1yrMonthly: round2(totalRi1yr),
+      ri3yrMonthly: round2(totalRi3yr),
+      ri1yrAnnualSavings: round2(monthlyToAnnual(totalCurrent - totalRi1yr)),
+      ri3yrAnnualSavings: round2(monthlyToAnnual(totalCurrent - totalRi3yr)),
+    },
+  };
+}
+
 // Round to 2 decimal places for currency values
 function round2(n) { return Math.round(n * 100) / 100; }
 // Round to 1 decimal place for percentages
@@ -131,4 +189,5 @@ module.exports = {
   buildScanJson,
   buildCompareJson,
   buildPlanJson,
+  buildRiJson,
 };

@@ -548,11 +548,100 @@ function renderServiceOverview({ serviceName, region, currency, os, items }) {
   logger.spacer();
 }
 
+/**
+ * Render reserved instance recommendations below the main cost table.
+ * Shows current PAYG cost vs 1yr and 3yr RI monthly equivalents with savings.
+ *
+ * @param {Array<object>} recommendations - From ri-advisor.getRecommendations()
+ * @param {string} currency
+ */
+function renderRiRecommendations(recommendations, currency) {
+  if (recommendations.length === 0) return;
+
+  logger.spacer();
+  logger.dim('── Reserved instance savings ──────────────────────────────────');
+  logger.spacer();
+  logger.dim(`${recommendations.length} resource(s) eligible for reserved pricing:`);
+  logger.spacer();
+
+  const table = new Table({
+    head: [
+      chalk.dim('Resource'),
+      chalk.dim('Current'),
+      chalk.dim('1yr RI'),
+      chalk.dim('Save'),
+      chalk.dim('3yr RI'),
+      chalk.dim('Save'),
+    ],
+    style: { head: [], border: ['dim'] },
+    colAligns: ['left', 'right', 'right', 'right', 'right', 'right'],
+  });
+
+  let totalCurrent = 0;
+  let totalRi1yr = 0;
+  let totalRi3yr = 0;
+  let has1yr = false;
+  let has3yr = false;
+
+  for (const r of recommendations) {
+    totalCurrent += r.currentMonthly;
+
+    const ri1 = r.ri1yrMonthly != null ? r.ri1yrMonthly : null;
+    const ri3 = r.ri3yrMonthly != null ? r.ri3yrMonthly : null;
+
+    if (ri1 != null) { totalRi1yr += ri1; has1yr = true; } else { totalRi1yr += r.currentMonthly; }
+    if (ri3 != null) { totalRi3yr += ri3; has3yr = true; } else { totalRi3yr += r.currentMonthly; }
+
+    const save1 = ri1 != null ? r.currentMonthly - ri1 : 0;
+    const save3 = ri3 != null ? r.currentMonthly - ri3 : 0;
+
+    const nameLabel = `${r.name} ${r.sku}`;
+
+    table.push([
+      chalk.white(nameLabel.length > 28 ? nameLabel.slice(0, 28) : nameLabel),
+      chalk.green(formatMoney(r.currentMonthly, currency)),
+      ri1 != null ? chalk.green(formatMoney(ri1, currency)) : chalk.dim('—'),
+      ri1 != null ? chalk.cyan(`-${formatMoney(save1, currency)}`) : chalk.dim('—'),
+      ri3 != null ? chalk.green(formatMoney(ri3, currency)) : chalk.dim('—'),
+      ri3 != null ? chalk.cyan(`-${formatMoney(save3, currency)}`) : chalk.dim('—'),
+    ]);
+  }
+
+  // Total row
+  const totalSave1 = totalCurrent - totalRi1yr;
+  const totalSave3 = totalCurrent - totalRi3yr;
+
+  table.push([
+    chalk.bold.white('TOTAL'),
+    chalk.bold.white(formatMoney(totalCurrent, currency)),
+    has1yr ? chalk.bold.white(formatMoney(totalRi1yr, currency)) : chalk.dim('—'),
+    has1yr ? chalk.bold.cyan(`-${formatMoney(totalSave1, currency)}`) : chalk.dim('—'),
+    has3yr ? chalk.bold.white(formatMoney(totalRi3yr, currency)) : chalk.dim('—'),
+    has3yr ? chalk.bold.cyan(`-${formatMoney(totalSave3, currency)}`) : chalk.dim('—'),
+  ]);
+
+  logger.raw(table.toString() + '\n');
+
+  // Summary tip
+  if (has1yr) {
+    const pct1 = totalCurrent > 0 ? ((totalSave1 / totalCurrent) * 100).toFixed(0) : 0;
+    const annualSave1 = monthlyToAnnual(totalSave1);
+    logger.spacer();
+    logger.dim(`  Reserving all ${recommendations.length} for 1yr saves ~${formatMoney(annualSave1, currency)}/yr (${pct1}% less)`);
+  }
+  if (has3yr) {
+    const pct3 = totalCurrent > 0 ? ((totalSave3 / totalCurrent) * 100).toFixed(0) : 0;
+    const annualSave3 = monthlyToAnnual(totalSave3);
+    logger.dim(`  Reserving all ${recommendations.length} for 3yr saves ~${formatMoney(annualSave3, currency)}/yr (${pct3}% less)`);
+  }
+}
+
 module.exports = {
   renderPriceLookup,
   renderScanResult,
   renderScanResultGrouped,
   renderComparison,
   renderServiceOverview,
+  renderRiRecommendations,
   estimateMonthly,
 };
