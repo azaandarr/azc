@@ -22,17 +22,44 @@ const { renderComparison } = require('../formatters/table');
 const { buildCompareJson } = require('../formatters/json');
 const { createSpinner } = require('../utils/spinner');
 const { formatMoney, hourlyToMonthly } = require('../utils/currency');
+const {
+  familyPicker,
+  enrichChoicesWithPrices,
+  lookupSinglePrice,
+  NUMBERED_THEME,
+} = require('../utils/sku-picker');
 
 // Load service alias mappings for matching the --with service name
 const skuMappings = require(path.join(__dirname, '../../data/sku-mappings.json'));
 
+// Map ARM resource type → picker type for interactive SKU selection
+const PICKER_MAP = {
+  'microsoft.web/serverfarms': 'appservice',
+  'microsoft.compute/virtualmachines': 'vm',
+  'microsoft.dbforpostgresql/flexibleservers': 'pg',
+  'microsoft.cache/redis': 'redis',
+  'microsoft.sql/servers/databases': 'sql',
+};
+
+// Service name lookup for the pickers
+const SERVICE_NAME_MAP = {
+  'microsoft.web/serverfarms': 'Azure App Service',
+  'microsoft.compute/virtualmachines': 'Virtual Machines',
+  'microsoft.dbforpostgresql/flexibleservers': 'Azure Database for PostgreSQL',
+  'microsoft.cache/redis': 'Redis Cache',
+  'microsoft.sql/servers/databases': 'SQL Database',
+};
+
+// SKU choices for static pickers
+const SKU_CHOICES = {
+  appservice: ['F1', 'B1', 'B2', 'B3', 'S1', 'S2', 'S3', 'P1v3', 'P2v3', 'P3v3'],
+  redis: ['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'P1', 'P2', 'P3', 'P4', 'P5'],
+  sql: ['S0', 'S1', 'S2', 'S3', 'GP_Gen5_2', 'GP_Gen5_4', 'GP_Gen5_8', 'BC_Gen5_2', 'BC_Gen5_4'],
+};
+
 /**
  * Parse the --with spec into a service match and proposed SKU.
  * Format: "ServiceAlias:NewSKU[,property=value,...]"
- * Example: "App Service:P1v3" or "PostgreSQL:Standard_D4ds_v5,storage=256GB"
- *
- * @param {string} spec - The --with argument value
- * @returns {{ serviceAlias: string, newSku: string, props: object } | null}
  */
 function parseChangeSpec(spec) {
   const colonIdx = spec.indexOf(':');
@@ -42,13 +69,10 @@ function parseChangeSpec(spec) {
 
   const serviceAlias = spec.substring(0, colonIdx).trim();
   const rest = spec.substring(colonIdx + 1).trim();
-
-  // Split the rest by comma to separate SKU from optional properties
   const parts = rest.split(',').map((p) => p.trim());
   const newSku = parts[0];
   const props = {};
 
-  // Parse optional key=value properties (e.g. "storage=256GB", "instances=3")
   for (let i = 1; i < parts.length; i++) {
     const eqIdx = parts[i].indexOf('=');
     if (eqIdx > 0) {
@@ -63,15 +87,10 @@ function parseChangeSpec(spec) {
 
 /**
  * Find the ARM resource type(s) that match a service alias.
- * Returns an array of lowercase resource type strings.
- *
- * @param {string} alias - User-provided service alias (e.g. "App Service", "PostgreSQL")
- * @returns {string[]} Matching ARM resource type strings
  */
 function resolveServiceType(alias) {
   const lowerAlias = alias.toLowerCase();
 
-  // Map of alias → ARM resource types (from sku-mapper's supported types)
   const aliasToType = {
     'app service': ['microsoft.web/serverfarms'],
     'app service plan': ['microsoft.web/serverfarms'],
@@ -106,7 +125,6 @@ function resolveServiceType(alias) {
 
 /**
  * Register the compare command on the parent commander program.
- * @param {import('commander').Command} program
  */
 module.exports = function registerCompareCommand(program) {
   program
@@ -119,7 +137,6 @@ module.exports = function registerCompareCommand(program) {
     .option('-c, --currency <code>', 'Currency code: GBP, USD, EUR', config.getDefault('currency'))
     .option('-f, --format <type>', 'Output format: table or json', config.getDefault('format'))
     .action(async (opts) => {
-      // ── Authenticate and scan (needed for both modes) ──────────
       const authSpinner = createSpinner('Authenticating...');
       authSpinner.start();
       await validate();
@@ -159,7 +176,6 @@ module.exports = function registerCompareCommand(program) {
         process.exit(1);
       }
 
-      // Resolve the service alias to ARM resource type(s)
       const targetTypes = resolveServiceType(change.serviceAlias);
       if (targetTypes.length === 0) {
         logger.error(
@@ -171,7 +187,6 @@ module.exports = function registerCompareCommand(program) {
         process.exit(1);
       }
 
-      // ── Find matching resource(s) ───────────────────────────────
       const candidates = resources.filter((r) => targetTypes.includes(r.type));
 
       if (candidates.length === 0) {
@@ -182,7 +197,6 @@ module.exports = function registerCompareCommand(program) {
         process.exit(1);
       }
 
-      // If multiple candidates exist, use --name to disambiguate
       let target;
       if (candidates.length === 1) {
         target = candidates[0];
@@ -197,7 +211,6 @@ module.exports = function registerCompareCommand(program) {
           process.exit(1);
         }
       } else {
-        // Multiple candidates and no --name — ask user to specify
         logger.error(
           `Found ${candidates.length} ${change.serviceAlias} resources. Use --name to pick one:\n` +
           candidates.map((r) => `  • ${r.name}`).join('\n'),
@@ -207,19 +220,18 @@ module.exports = function registerCompareCommand(program) {
       }
 
       logger.dim(`Comparing: ${target.name} (${target.type})`);
-
       await runComparison(target, change.newSku, change.props, opts);
     });
 };
 
 /**
- * Interactive compare mode — user picks a resource from a list,
- * then picks a new SKU with price deltas shown inline.
+ * Interactive compare mode — user picks a resource, then picks a new SKU
+ * using the appropriate picker (family picker for VMs/PG, enriched choices
+ * for App Service/Redis/SQL, free text for everything else).
  */
 async function interactiveCompare(resources, opts, subscriptionId) {
   const { select, input } = require('@inquirer/prompts');
 
-  // Price all supported resources to build the interactive list
   const pricedResources = [];
   const priceSpinner = createSpinner('Pricing resources...');
   priceSpinner.start();
@@ -245,9 +257,7 @@ async function interactiveCompare(resources, opts, subscriptionId) {
         skuLabel,
         monthlyCost: cost,
       });
-    } catch (_) {
-      // Skip resources we can't price
-    }
+    } catch (_) {}
   }
 
   priceSpinner.stop(`${pricedResources.length} priced resource(s)`);
@@ -257,7 +267,6 @@ async function interactiveCompare(resources, opts, subscriptionId) {
     return;
   }
 
-  // Show the resource picker with current costs
   const resourceChoices = pricedResources.map((pr, i) => ({
     name: `${pr.resource.name.padEnd(24)} ${chalk.dim(pr.resource.type.split('/').pop().padEnd(20))} ${chalk.blue(String(pr.skuLabel).padEnd(16))} ${chalk.green(formatMoney(pr.monthlyCost, opts.currency) + '/mo')}`,
     value: i,
@@ -266,19 +275,61 @@ async function interactiveCompare(resources, opts, subscriptionId) {
   const selectedIdx = await select({
     message: 'Which resource do you want to re-spec?',
     choices: resourceChoices,
-    theme: { indexMode: 'number' },
+    theme: NUMBERED_THEME,
   });
 
   const selected = pricedResources[selectedIdx];
+  const pickerType = PICKER_MAP[selected.resource.type];
+  let newSku;
 
-  // Ask for the new SKU
-  const newSku = await input({
-    message: `New SKU for ${selected.resource.name} (currently ${selected.skuLabel}):`,
-  });
+  // Use the appropriate picker based on resource type
+  if (pickerType === 'vm' || pickerType === 'pg') {
+    newSku = await familyPicker(pickerType, select, input, {}, {
+      region: opts.region,
+      currency: opts.currency,
+      serviceName: SERVICE_NAME_MAP[selected.resource.type],
+      os: selected.descriptor.os,
+    });
+  } else if (pickerType && SKU_CHOICES[pickerType]) {
+    // Static picker with inline prices and cost deltas
+    const serviceName = SERVICE_NAME_MAP[selected.resource.type];
+    const enriched = await enrichChoicesWithPrices({
+      serviceName,
+      choices: SKU_CHOICES[pickerType],
+      os: selected.descriptor.os,
+      tier: selected.descriptor.productFilter,
+      region: opts.region,
+      currency: opts.currency,
+    });
+
+    // Annotate with cost deltas and mark current SKU
+    const annotated = enriched.map((c) => {
+      const isCurrent = c.value.toLowerCase() === (selected.skuLabel || '').toLowerCase();
+      let label = c.name;
+      if (isCurrent) {
+        label += chalk.yellow(' ← current');
+      } else if (c.monthly != null) {
+        const delta = c.monthly - selected.monthlyCost;
+        if (delta > 0) label += chalk.red(` ↑ ${formatMoney(delta, opts.currency)}/mo more`);
+        else if (delta < 0) label += chalk.green(` ↓ ${formatMoney(Math.abs(delta), opts.currency)}/mo cheaper`);
+      }
+      return { ...c, name: label };
+    });
+
+    newSku = await select({
+      message: `New SKU for ${selected.resource.name} (currently ${selected.skuLabel}):`,
+      choices: annotated,
+      theme: NUMBERED_THEME,
+    });
+  } else {
+    // Fallback: free text input
+    newSku = await input({
+      message: `New SKU for ${selected.resource.name} (currently ${selected.skuLabel}):`,
+    });
+  }
 
   await runComparison(selected.resource, newSku, {}, opts);
 
-  // Contextual tip
   logger.spacer();
   logger.dim(`Tip: azc compare -s ${subscriptionId.substring(0, 8)}... --with "${selected.resource.type.split('/').pop()}:${newSku}" for non-interactive use`);
 }
@@ -306,7 +357,6 @@ async function runComparison(target, newSku, props, opts) {
     process.exit(1);
   }
 
-  // ── Get proposed cost ───────────────────────────────────────
   let proposedMonthlyCost;
   try {
     const proposedItems = await lookupPrice({
@@ -316,7 +366,6 @@ async function runComparison(target, newSku, props, opts) {
       currency: opts.currency,
     });
 
-    // Fuzzy-match the proposed SKU against the results
     const skuLower = newSku.toLowerCase().replace(/\s+/g, '');
     let matched = proposedItems.filter((item) => {
       const skuName = (item.skuName || '').toLowerCase().replace(/\s+/g, '');
@@ -325,7 +374,6 @@ async function runComparison(target, newSku, props, opts) {
       return skuName.includes(skuLower) || armSku.includes(skuLower) || meter.includes(skuLower);
     });
 
-    // Apply OS filtering if the current resource has an OS
     if (currentDescriptor.os) {
       const osFiltered = matched.filter((item) => {
         const prod = (item.productName || '').toLowerCase();
@@ -335,7 +383,6 @@ async function runComparison(target, newSku, props, opts) {
       if (osFiltered.length > 0) matched = osFiltered;
     }
 
-    // Filter out Spot and Low Priority SKUs
     matched = matched.filter((item) => {
       const meter = (item.meterName || '').toLowerCase();
       const sku = (item.skuName || '').toLowerCase();
@@ -361,7 +408,6 @@ async function runComparison(target, newSku, props, opts) {
       proposedMonthlyCost = rate;
     }
 
-    // Apply instance count from props or current config
     const instances = props.instances
       ? parseInt(props.instances, 10)
       : (currentDescriptor.quantity || 1);
@@ -375,7 +421,6 @@ async function runComparison(target, newSku, props, opts) {
 
   priceSpinner.stop('Prices fetched');
 
-  // ── Output ──────────────────────────────────────────────────
   const currentSkuLabel = (target.sku && target.sku.name)
     || (target.properties && target.properties.hardwareProfile && target.properties.hardwareProfile.vmSize)
     || currentDescriptor.skuMatch || '—';
@@ -398,7 +443,6 @@ async function runComparison(target, newSku, props, opts) {
 
 /**
  * Calculate monthly cost from a SKU mapper descriptor.
- * Reuses the matching logic from scan.js but extracted for compare use.
  */
 async function priceFromDescriptor(descriptor, region, currency) {
   if (descriptor.usageBased) return 0;
@@ -450,7 +494,6 @@ async function priceFromDescriptor(descriptor, region, currency) {
     if (osFiltered.length > 0) matched = osFiltered;
   }
 
-  // Filter out Spot and Low Priority SKUs
   matched = matched.filter((item) => {
     const meter = (item.meterName || '').toLowerCase();
     const sku = (item.skuName || '').toLowerCase();

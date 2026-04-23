@@ -20,7 +20,7 @@ const { validate } = require('../auth/credential');
 const { queryResources } = require('../services/resource-graph');
 const { mapResource, isSupported } = require('../services/sku-mapper');
 const { lookupPrice } = require('../services/retail-prices');
-const { renderScanResult } = require('../formatters/table');
+const { renderScanResult, renderScanResultGrouped } = require('../formatters/table');
 const { buildScanJson } = require('../formatters/json');
 const { exportToXlsx } = require('../formatters/xlsx');
 const { createSpinner } = require('../utils/spinner');
@@ -40,6 +40,8 @@ module.exports = function registerScanCommand(program) {
     .option('-f, --format <type>', 'Output format: table or json', config.getDefault('format'))
     .option('-r, --region <region>', 'Override region for pricing lookup', config.getDefault('region'))
     .option('-c, --currency <code>', 'Currency code: GBP, USD, EUR', config.getDefault('currency'))
+    .option('--group', 'Group identical resource types in output (default)', true)
+    .option('--no-group', 'Show flat per-resource table')
     .action(async (opts) => {
       // ── Step 1: Validate Azure credentials ──────────────────────
       const authSpinner = createSpinner('Authenticating with Azure...');
@@ -167,6 +169,8 @@ module.exports = function registerScanCommand(program) {
       if (opts.format === 'json') {
         const result = buildScanJson(scanData);
         logger.raw(JSON.stringify(result, null, 2) + '\n');
+      } else if (opts.group) {
+        renderScanResultGrouped(scanData);
       } else {
         renderScanResult(scanData);
       }

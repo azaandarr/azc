@@ -111,6 +111,8 @@ function buildPlanJson({ region, currency, items }) {
     items: items.map((i) => ({
       service: i.service,
       sku: i.sku,
+      quantity: i.quantity || 1,
+      unitCost: i.unitCost != null ? round2(i.unitCost) : round2(i.monthlyCost),
       monthlyCost: round2(i.monthlyCost),
       annualCost: round2(monthlyToAnnual(i.monthlyCost)),
       notes: i.notes || undefined,

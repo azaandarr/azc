@@ -221,6 +221,123 @@ function renderScanResult({ subscription, region, currency, resources, unsupport
 }
 
 /**
+ * Render a scan result with resources grouped by {type, sku}.
+ * Multiple resources of the same type/SKU are collapsed into one row
+ * with a quantity column and their names listed below in dim text.
+ */
+function renderScanResultGrouped({ subscription, region, currency, resources, unsupported, unpriced }) {
+  const fixedCost = resources.filter((r) => !r.usageBased);
+  const usageBased = resources.filter((r) => r.usageBased);
+
+  const totalMonthly = fixedCost.reduce((sum, r) => sum + r.monthlyCost, 0);
+  const totalResources = resources.length + (unsupported || []).length + (unpriced || []).length;
+
+  logger.spacer();
+  logger.header(`Cost estimate: ${chalk.bold(subscription)}`);
+  logger.dim(`Region: ${region} | Currency: ${currency} | ${new Date().toISOString().split('T')[0]}`);
+
+  if (totalResources > 0) {
+    const parts = [];
+    parts.push(`${totalResources} resources scanned`);
+    if (fixedCost.length > 0) parts.push(`${fixedCost.length} priced`);
+    if (usageBased.length > 0) parts.push(`${usageBased.length} usage-based`);
+    if (unsupported && unsupported.length > 0) parts.push(`${unsupported.length} unsupported`);
+    if (unpriced && unpriced.length > 0) parts.push(`${unpriced.length} unpriced`);
+    logger.dim(parts.join(', '));
+  }
+
+  logger.spacer();
+
+  if (resources.length === 0 && (unsupported || []).length === 0) {
+    logger.warn('No resources found in this subscription.');
+    return;
+  }
+
+  if (fixedCost.length > 0) {
+    // Group by type + sku
+    const groups = new Map();
+    for (const r of fixedCost) {
+      const key = `${r.type}|${r.sku || '—'}`;
+      if (!groups.has(key)) {
+        groups.set(key, { type: r.type, sku: r.sku || '—', resources: [], totalCost: 0 });
+      }
+      const g = groups.get(key);
+      g.resources.push(r);
+      g.totalCost += r.monthlyCost;
+    }
+
+    const table = new Table({
+      head: [
+        chalk.dim('Type'),
+        chalk.dim('SKU'),
+        chalk.dim('Qty'),
+        chalk.dim('Monthly'),
+        chalk.dim('Annual'),
+      ],
+      style: { head: [], border: ['dim'] },
+      colAligns: ['left', 'left', 'right', 'right', 'right'],
+    });
+
+    for (const [, g] of groups) {
+      const qty = g.resources.length;
+      const names = g.resources.map((r) => r.name).join(', ');
+
+      table.push([
+        coral(g.type),
+        chalk.blue(g.sku),
+        `${qty}×`,
+        chalk.green(formatMoney(g.totalCost, currency)),
+        chalk.green(formatMoney(monthlyToAnnual(g.totalCost), currency)),
+      ]);
+
+      // Show resource names on a second line for multi-resource groups,
+      // or inline for single resources
+      if (qty === 1) {
+        table.push([{ content: chalk.dim(`  ${names}`), colSpan: 5 }]);
+      } else {
+        table.push([{ content: chalk.dim(`  ${names}`), colSpan: 5 }]);
+      }
+    }
+
+    table.push([
+      { content: chalk.bold.white('TOTAL'), colSpan: 3 },
+      chalk.bold.white(formatMoney(totalMonthly, currency)),
+      chalk.bold.white(formatMoney(monthlyToAnnual(totalMonthly), currency)),
+    ]);
+
+    logger.raw(table.toString() + '\n');
+  }
+
+  // Reuse the same sections for usage-based, unpriced, unsupported
+  if (usageBased.length > 0) {
+    logger.spacer();
+    logger.dim(`${usageBased.length} usage-based resource(s) (cost depends on consumption):`);
+    for (const r of usageBased) {
+      const skuInfo = r.sku && r.sku !== '—' ? chalk.blue(r.sku) : '';
+      logger.dim(`  • ${chalk.white(r.name)} ${coral(r.type)} ${skuInfo}`);
+    }
+  }
+
+  if (unpriced && unpriced.length > 0) {
+    logger.spacer();
+    logger.warn(`${unpriced.length} resource(s) could not be priced:`);
+    for (const r of unpriced) {
+      logger.dim(`  • ${r.name} (${r.type}) — ${r.reason || 'price not found'}`);
+    }
+  }
+
+  if (unsupported && unsupported.length > 0) {
+    logger.spacer();
+    logger.dim(`${unsupported.length} resource(s) not yet supported:`);
+    for (const r of unsupported) {
+      logger.dim(`  • ${r.name} (${r.type})`);
+    }
+  }
+
+  logger.spacer();
+}
+
+/**
  * Render a comparison result (from `azc compare`) as a side-by-side diff.
  *
  * @param {object} params
@@ -434,6 +551,7 @@ function renderServiceOverview({ serviceName, region, currency, os, items }) {
 module.exports = {
   renderPriceLookup,
   renderScanResult,
+  renderScanResultGrouped,
   renderComparison,
   renderServiceOverview,
   estimateMonthly,

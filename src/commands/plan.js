@@ -3,27 +3,28 @@
 // Walks the user through selecting a region, adding resources one by one,
 // choosing SKUs, and viewing a running total. Saves estimates to
 // ~/.azc/estimates/ for reloading and modification later.
+//
+// Supports CLI shorthand: azc plan "3x App Service P1v3 linux" "PostgreSQL D2ds_v5"
+// to skip interactive prompts entirely.
 
 const fs = require('fs');
 const path = require('path');
 const chalk = require('chalk');
 const config = require('../config/config');
 const logger = require('../utils/logger');
-const { lookupPrice } = require('../services/retail-prices');
 const { renderScanResult } = require('../formatters/table');
 const { buildPlanJson } = require('../formatters/json');
 const { exportToXlsx } = require('../formatters/xlsx');
 const { createSpinner } = require('../utils/spinner');
 const { formatMoney, formatCompact, hourlyToMonthly, monthlyToAnnual } = require('../utils/currency');
 const { ESTIMATES_DIR, AZC_HOME } = require('../config/config');
-
-// Show numbered indices on all select prompts so users can type a number
-// to jump directly to an option (works alongside arrow key navigation)
-const NUMBERED_THEME = { indexMode: 'number' };
-
-// Load VM and PostgreSQL SKU data files for the family → size picker
-const vmSkus = require(path.join(__dirname, '../../data/vm-skus.json'));
-const pgSkus = require(path.join(__dirname, '../../data/pg-skus.json'));
+const {
+  familyPicker,
+  lookupSinglePrice,
+  enrichChoicesWithPrices,
+  parseInlineResource,
+  NUMBERED_THEME,
+} = require('../utils/sku-picker');
 
 // MRU (most recently used) file path — lightweight memory of last choices
 const MRU_PATH = path.join(AZC_HOME, 'mru.json');
@@ -41,26 +42,22 @@ const SERVICE_CATALOG = [
       { key: 'os', message: 'Operating system', choices: ['linux', 'windows'] },
       { key: 'instances', message: 'Number of instances', type: 'number', default: 1 },
     ],
-    // Companion suggestion shown after adding this resource
-    companion: { message: 'Add an Application Insights instance for monitoring?', service: 'Application Insights', defaults: { sku: 'Enterprise', usageBased: true } },
+    companion: { message: 'Add Application Insights?', service: 'Application Insights', defaults: { sku: 'Enterprise', usageBased: true } },
   },
   {
     name: 'Virtual Machine',
     serviceName: 'Virtual Machines',
     category: 'compute',
-    // VM uses the two-step family → size picker instead of prompts
     useFamilyPicker: 'vm',
     prompts: [
       { key: 'os', message: 'Operating system', choices: ['linux', 'windows'] },
     ],
-    // Companion suggestion: managed disk
     companion: { message: 'Add a Managed Disk?', service: 'Managed Disks', defaults: { sku: 'P10', notes: '128 GB Premium SSD' } },
   },
   {
     name: 'PostgreSQL Flexible Server',
     serviceName: 'Azure Database for PostgreSQL',
     category: 'database',
-    // PostgreSQL uses the two-step family → size picker
     useFamilyPicker: 'pg',
     prompts: [],
   },
@@ -117,12 +114,6 @@ const CATEGORY_LABELS = {
   networking: 'NETWORKING',
   other: 'OTHER',
 };
-const CATEGORY_ICONS = {
-  compute: '⚡',
-  database: '◆',
-  networking: '◇',
-  other: '▣',
-};
 
 // Common Azure regions for the region picker
 const COMMON_REGIONS = [
@@ -144,125 +135,60 @@ function loadTemplates() {
 
 /**
  * Load the MRU (most recently used) data from ~/.azc/mru.json.
- * Returns an empty object if the file doesn't exist or is corrupt.
  */
 function loadMru() {
   try {
     if (fs.existsSync(MRU_PATH)) {
       return JSON.parse(fs.readFileSync(MRU_PATH, 'utf8'));
     }
-  } catch (_) {
-    // Corrupt MRU file — ignore and start fresh
-  }
+  } catch (_) {}
   return {};
 }
 
 /**
- * Save MRU data to disk. Creates the directory if needed.
+ * Save MRU data to disk.
  */
 function saveMru(mru) {
   try {
     const dir = path.dirname(MRU_PATH);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(MRU_PATH, JSON.stringify(mru, null, 2), 'utf8');
-  } catch (_) {
-    // Non-critical — don't crash if we can't save MRU
-  }
-}
-
-/**
- * Two-step family → size picker for VMs and PostgreSQL.
- * Step 1: pick a family (with spec ranges shown inline).
- * Step 2: pick a specific size from that family (with vCPU/RAM inline).
- * Escape hatch: "Type a custom SKU..." for edge cases.
- *
- * @param {string} type - 'vm' or 'pg'
- * @param {Function} select - inquirer select function
- * @param {Function} input  - inquirer input function
- * @param {object} mru      - MRU data for default selection
- * @returns {string} The selected SKU string (e.g. "Standard_D4s_v5")
- */
-async function familyPicker(type, select, input, mru) {
-  const data = type === 'vm' ? vmSkus : pgSkus;
-  const mruKey = type === 'vm' ? 'lastVmSku' : 'lastPgSku';
-  const lastSku = mru[mruKey] || '';
-
-  // Build family choices with spec ranges shown inline
-  const familyChoices = data.families.map((fam, idx) => {
-    const minCpu = Math.min(...fam.skus.map((s) => s.vcpus));
-    const maxCpu = Math.max(...fam.skus.map((s) => s.vcpus));
-    const minRam = Math.min(...fam.skus.map((s) => s.ramGB));
-    const maxRam = Math.max(...fam.skus.map((s) => s.ramGB));
-    const specRange = `(${minCpu}-${maxCpu} vCPU, ${minRam}-${maxRam} GB)`;
-    const label = `${fam.description}  ${chalk.dim(specRange)}`;
-    return { name: `${fam.name.split('(')[0].trim().padEnd(22)} ${label}`, value: idx };
-  });
-
-  // Escape hatch as the last option
-  familyChoices.push({ name: chalk.dim('↳ Type a custom SKU...'), value: -1 });
-
-  // Pre-select the family that contains the last-used SKU
-  let defaultFamily;
-  if (lastSku) {
-    defaultFamily = data.families.findIndex((fam) =>
-      fam.skus.some((s) => s.sku === lastSku)
-    );
-    if (defaultFamily === -1) defaultFamily = undefined;
-  }
-
-  const familyIdx = await select({
-    message: type === 'vm' ? 'Pick a VM family:' : 'Pick a PostgreSQL tier:',
-    choices: familyChoices,
-    default: defaultFamily,
-    theme: NUMBERED_THEME,
-  });
-
-  // Escape hatch — free-text input for custom SKUs
-  if (familyIdx === -1) {
-    return await input({
-      message: type === 'vm' ? 'VM size' : 'Compute SKU',
-      default: lastSku || '',
-    });
-  }
-
-  const family = data.families[familyIdx];
-
-  // Build size choices with vCPU/RAM inline
-  const sizeChoices = family.skus.map((s) => {
-    const cpuStr = String(s.vcpus).padStart(2);
-    const ramStr = String(s.ramGB).padStart(4);
-    return {
-      name: `${s.sku.padEnd(22)} ${cpuStr} vCPU  ${ramStr} GB RAM`,
-      value: s.sku,
-    };
-  });
-
-  const selectedSku = await select({
-    message: 'Pick a size:',
-    choices: sizeChoices,
-    default: lastSku && family.skus.some((s) => s.sku === lastSku) ? lastSku : undefined,
-    theme: NUMBERED_THEME,
-  });
-
-  return selectedSku;
+  } catch (_) {}
 }
 
 /**
  * Build the grouped, categorised service catalog choices for the select prompt.
- * Groups services by category with dim headers, and marks recently-used services.
+ * Includes "Done" and "Edit" options at the top when items exist.
  *
  * @param {object} mru - MRU data for highlighting recently used services
+ * @param {Array<object>} items - Current estimate items (for Done/Edit labels)
+ * @param {string} currency - Currency code for the running total display
  * @returns {Array<object>} Choices array for inquirer select
  */
-function buildServiceChoices(mru) {
+function buildServiceChoices(mru, items, currency) {
   const lastServices = mru.lastServices || [];
   const choices = [];
 
+  // "Done" option — only show when there are items
+  if (items.length > 0) {
+    const total = items.reduce((sum, i) => sum + i.monthlyCost, 0);
+    choices.push({
+      name: chalk.green(`  ✓ Done — show estimate (${items.length} resource${items.length !== 1 ? 's' : ''}, ~${formatCompact(total, currency)})`),
+      value: -2,
+    });
+  }
+
+  // "Edit" option — only show when there are items
+  if (items.length > 0) {
+    choices.push({
+      name: chalk.yellow(`  ✎ Edit estimate...`),
+      value: -3,
+    });
+  }
+
   for (const cat of CATEGORY_ORDER) {
-    const icon = CATEGORY_ICONS[cat];
     const label = CATEGORY_LABELS[cat];
-    // Category header as a disabled separator
-    choices.push({ name: chalk.dim(`  ${icon} ${label}`), value: -1, disabled: '' });
+    choices.push({ name: chalk.dim(` ── ${label}`), value: -1, disabled: '' });
 
     const servicesInCat = SERVICE_CATALOG
       .map((s, i) => ({ ...s, originalIndex: i }))
@@ -278,165 +204,66 @@ function buildServiceChoices(mru) {
 }
 
 /**
- * Look up a price for a single SKU and return the monthly cost.
- * Filters out Spot and Low Priority entries. Returns null if no price found.
+ * Show the edit sub-flow: list current items with remove/change-quantity actions.
  */
-async function lookupSinglePrice({ serviceName, sku, os, tier, region, currency }) {
-  const priceItems = await lookupPrice({
-    serviceName,
-    armRegionName: region,
-    priceType: 'Consumption',
-    currency,
-  });
-
-  const skuLower = (sku || '').toLowerCase().replace(/\s+/g, '');
-  let matched = priceItems.filter((item) => {
-    const skuName = (item.skuName || '').toLowerCase().replace(/\s+/g, '');
-    const armSku = (item.armSkuName || '').toLowerCase().replace(/\s+/g, '');
-    const meter = (item.meterName || '').toLowerCase().replace(/\s+/g, '');
-    return skuName.includes(skuLower) || armSku.includes(skuLower) || meter.includes(skuLower);
-  });
-
-  // Filter by OS if applicable
-  if (os) {
-    const osFiltered = matched.filter((item) => {
-      const prod = (item.productName || '').toLowerCase();
-      if (os === 'linux') return prod.includes('linux');
-      return !prod.includes('linux');
-    });
-    if (osFiltered.length > 0) matched = osFiltered;
-  }
-
-  // Filter by tier/product if provided (e.g. Redis Basic vs Standard)
-  if (tier) {
-    const tf = tier.toLowerCase();
-    const tierFiltered = matched.filter((item) => {
-      return (item.productName || '').toLowerCase().includes(tf);
-    });
-    if (tierFiltered.length > 0) matched = tierFiltered;
-  }
-
-  // Meter filter for Redis disambiguation
-  if (sku && serviceName === 'Redis Cache') {
-    const mf = `${sku} Cache`.toLowerCase().replace(/\s+/g, '');
-    const mfFiltered = matched.filter((item) => {
-      const meter = (item.meterName || '').toLowerCase().replace(/\s+/g, '');
-      return meter === mf;
-    });
-    if (mfFiltered.length > 0) matched = mfFiltered;
-  }
-
-  // Filter out Spot and Low Priority SKUs
-  matched = matched.filter((item) => {
-    const meter = (item.meterName || '').toLowerCase();
-    const skuN = (item.skuName || '').toLowerCase();
-    return !meter.includes('spot') && !meter.includes('low priority') &&
-           !skuN.includes('spot') && !skuN.includes('low priority');
-  });
-
-  if (matched.length === 0) return null;
-
-  const priceItem = matched[0];
-  const unit = (priceItem.unitOfMeasure || '').toLowerCase();
-
-  if (unit.includes('hour')) return hourlyToMonthly(priceItem.retailPrice);
-  if (unit.includes('month')) return priceItem.retailPrice;
-  if (unit.includes('day')) return priceItem.retailPrice * 30;
-  return priceItem.retailPrice;
-}
-
-/**
- * Pre-fetch prices for all choices in a static-choice prompt and return
- * enriched choice labels with prices appended. Falls back to plain labels
- * if the fetch fails or times out.
- */
-async function enrichChoicesWithPrices({ serviceName, choices, os, tier, region, currency }) {
-  const spinner = createSpinner(`Fetching prices for ${serviceName}...`);
-  spinner.start();
-
-  try {
-    const priceItems = await lookupPrice({
-      serviceName,
-      armRegionName: region,
-      priceType: 'Consumption',
-      currency,
+async function editEstimate(items, currency, select, number) {
+  while (true) {
+    const editChoices = items.map((item, idx) => {
+      const qtyStr = item.quantity > 1 ? `${item.quantity}×  ` : '    ';
+      return {
+        name: `${qtyStr}${item.service.padEnd(24)} ${chalk.blue(String(item.sku).padEnd(14))} ${chalk.green(formatMoney(item.monthlyCost, currency) + '/mo')}`,
+        value: idx,
+      };
     });
 
-    // Filter out Spot/Low Priority from the pool
-    const pool = priceItems.filter((item) => {
-      const meter = (item.meterName || '').toLowerCase();
-      const skuN = (item.skuName || '').toLowerCase();
-      return !meter.includes('spot') && !meter.includes('low priority') &&
-             !skuN.includes('spot') && !skuN.includes('low priority');
+    const total = items.reduce((sum, i) => sum + i.monthlyCost, 0);
+    editChoices.push({ name: chalk.dim(`    ${'─'.repeat(50)}`), value: -1, disabled: '' });
+    editChoices.push({ name: chalk.bold(`    Total: ${formatMoney(total, currency)}/mo`), value: -1, disabled: '' });
+    editChoices.push({ name: chalk.dim('    ↩ Back to adding resources'), value: -4 });
+
+    const picked = await select({
+      message: 'Your estimate:',
+      choices: editChoices,
+      theme: NUMBERED_THEME,
     });
 
-    const enriched = choices.map((choice) => {
-      const skuLower = choice.toLowerCase().replace(/\s+/g, '');
-      let matched = pool.filter((item) => {
-        const skuName = (item.skuName || '').toLowerCase().replace(/\s+/g, '');
-        const armSku = (item.armSkuName || '').toLowerCase().replace(/\s+/g, '');
-        const meter = (item.meterName || '').toLowerCase().replace(/\s+/g, '');
-        return skuName.includes(skuLower) || armSku.includes(skuLower) || meter.includes(skuLower);
+    if (picked === -4) return;
+
+    const item = items[picked];
+
+    const actionChoices = [
+      { name: 'Change quantity', value: 'qty' },
+      { name: chalk.red('Remove'), value: 'remove' },
+      { name: chalk.dim('Back'), value: 'back' },
+    ];
+
+    const action = await select({
+      message: `${item.service} ${item.sku} (${item.quantity}×, ${formatMoney(item.monthlyCost, currency)}/mo):`,
+      choices: actionChoices,
+      theme: NUMBERED_THEME,
+    });
+
+    if (action === 'qty') {
+      const newQty = await number({
+        message: 'New quantity:',
+        default: item.quantity,
+        min: 1,
+        max: 100,
       });
-
-      // Apply OS filter
-      if (os) {
-        const osF = matched.filter((item) => {
-          const prod = (item.productName || '').toLowerCase();
-          if (os === 'linux') return prod.includes('linux');
-          return !prod.includes('linux');
-        });
-        if (osF.length > 0) matched = osF;
-      }
-
-      // Apply tier filter
-      if (tier) {
-        const tf = tier.toLowerCase();
-        const tF = matched.filter((item) => (item.productName || '').toLowerCase().includes(tf));
-        if (tF.length > 0) matched = tF;
-      }
-
-      // Apply meter filter for Redis
-      if (serviceName === 'Redis Cache') {
-        const mf = `${choice} Cache`.toLowerCase().replace(/\s+/g, '');
-        const mF = matched.filter((item) => {
-          const meter = (item.meterName || '').toLowerCase().replace(/\s+/g, '');
-          return meter === mf;
-        });
-        if (mF.length > 0) matched = mF;
-      }
-
-      if (matched.length > 0) {
-        const priceItem = matched[0];
-        const unit = (priceItem.unitOfMeasure || '').toLowerCase();
-        let monthly;
-        if (unit.includes('hour')) monthly = hourlyToMonthly(priceItem.retailPrice);
-        else if (unit.includes('month')) monthly = priceItem.retailPrice;
-        else if (unit.includes('day')) monthly = priceItem.retailPrice * 30;
-        else monthly = priceItem.retailPrice;
-
-        const priceLabel = chalk.dim(` ~${formatMoney(monthly, currency)}/mo`);
-        return { name: `${choice.padEnd(12)}${priceLabel}`, value: choice, monthly };
-      }
-
-      return { name: choice, value: choice, monthly: null };
-    });
-
-    spinner.stop('Prices loaded');
-    return enriched;
-  } catch (_) {
-    spinner.fail('Price preview unavailable');
-    // Fall back to plain choices
-    return choices.map((c) => ({ name: c, value: c, monthly: null }));
+      item.quantity = newQty;
+      item.monthlyCost = item.unitCost * newQty;
+      logger.success(`Updated: ${newQty}× ${item.service} ${item.sku} — ${formatMoney(item.monthlyCost, currency)}/mo`);
+    } else if (action === 'remove') {
+      const removed = items.splice(picked, 1)[0];
+      logger.success(`Removed: ${removed.service} ${removed.sku}`);
+    }
   }
 }
 
 /**
  * Check if a cheaper AMD variant exists for a given VM or PG SKU and offer it.
- * Looks for _Ds_ → _Das_ and _Es_ → _Eas_ patterns.
  */
 async function offerCheaperAlternative({ sku, currentPrice, os, region, currency, serviceName, confirm }) {
-  // Check if the SKU has an AMD equivalent: _Ds_ → _Das_, _Es_ → _Eas_
   let amdSku = null;
   if (sku.match(/_D\d+s_v/)) {
     amdSku = sku.replace(/_D(\d+)s_v/, '_D$1as_v');
@@ -450,7 +277,6 @@ async function offerCheaperAlternative({ sku, currentPrice, os, region, currency
 
   if (!amdSku || amdSku === sku) return null;
 
-  // Look up the AMD variant's price
   try {
     const amdPrice = await lookupSinglePrice({ serviceName, sku: amdSku, os, region, currency });
     if (amdPrice && amdPrice < currentPrice) {
@@ -461,9 +287,7 @@ async function offerCheaperAlternative({ sku, currentPrice, os, region, currency
       });
       if (shouldSwitch) return { sku: amdSku, monthlyCost: amdPrice };
     }
-  } catch (_) {
-    // AMD variant price lookup failed — silently skip the suggestion
-  }
+  } catch (_) {}
 
   return null;
 }
@@ -476,14 +300,16 @@ module.exports = function registerPlanCommand(program) {
   program
     .command('plan')
     .description('Build a cost estimate interactively')
+    .argument('[resources...]', 'Inline resources, e.g. "3x App Service P1v3 linux"')
     .option('-i, --interactive', 'Launch the interactive guided builder')
     .option('-l, --load <file>', 'Load a previously saved estimate to modify')
+    .option('--last', 'Reload the most recent saved estimate')
     .option('-r, --region <region>', 'Pre-set region (skip the region prompt)')
     .option('-c, --currency <code>', 'Currency code', config.getDefault('currency'))
     .option('-f, --format <type>', 'Output format: table or json', config.getDefault('format'))
     .option('-o, --out <file>', 'Export to file (.json or .xlsx)')
     .option('-q, --quick', 'Start from a pre-built template')
-    .action(async (opts) => {
+    .action(async (inlineResources, opts) => {
       // Lazy-load inquirer — heavy dependency, only needed for interactive mode
       const { select, input, confirm, number } = require('@inquirer/prompts');
 
@@ -492,18 +318,119 @@ module.exports = function registerPlanCommand(program) {
       const currency = opts.currency;
       const mru = loadMru();
 
+      // ── --last flag: find most recent estimate file ────────────
+      if (opts.last) {
+        if (fs.existsSync(ESTIMATES_DIR)) {
+          const files = fs.readdirSync(ESTIMATES_DIR)
+            .filter((f) => f.endsWith('.json'))
+            .map((f) => ({ name: f, mtime: fs.statSync(path.join(ESTIMATES_DIR, f)).mtimeMs }))
+            .sort((a, b) => b.mtime - a.mtime);
+
+          if (files.length > 0) {
+            opts.load = path.join(ESTIMATES_DIR, files[0].name);
+            logger.dim(`Loading most recent: ${files[0].name}`);
+          } else {
+            logger.warn('No saved estimates found in ' + ESTIMATES_DIR);
+            return;
+          }
+        } else {
+          logger.warn('No estimates directory found. Run azc plan first to create one.');
+          return;
+        }
+      }
+
       // ── Load a saved estimate if --load was provided ────────────
       if (opts.load) {
         try {
           const raw = fs.readFileSync(opts.load, 'utf8');
           const saved = JSON.parse(raw);
-          items = saved.items || [];
+          items = (saved.items || []).map((i) => ({
+            ...i,
+            quantity: i.quantity || 1,
+            unitCost: i.unitCost || i.monthlyCost,
+          }));
           region = saved.region || region;
           logger.success(`Loaded ${items.length} item(s) from ${opts.load}`);
           logger.dim(`Region: ${region}, Currency: ${currency}`);
+
+          // If --format json and no interactive, just output and exit
+          if (opts.format === 'json' && !opts.interactive && inlineResources.length === 0) {
+            const result = buildPlanJson({ region, currency, items });
+            logger.raw(JSON.stringify(result, null, 2) + '\n');
+            return;
+          }
         } catch (err) {
           logger.error(`Could not load estimate: ${err.message}`, 'AZC_LOAD_FAILED');
           process.exit(1);
+        }
+      }
+
+      // ── Inline resource arguments (CLI shorthand) ───────────────
+      if (inlineResources.length > 0) {
+        const spinner = createSpinner('Looking up prices...');
+        spinner.start();
+
+        for (const resStr of inlineResources) {
+          const parsed = parseInlineResource(resStr);
+          if (!parsed) {
+            spinner.fail(`Could not parse: "${resStr}"`);
+            logger.error(
+              `Invalid resource format. Expected: [Nx] <Service> <SKU> [os] [tier]\n` +
+              '  Examples: "3x App Service P1v3 linux", "PostgreSQL D2ds_v5", "Redis C1 standard"',
+              'AZC_PARSE_FAILED'
+            );
+            process.exit(1);
+          }
+
+          try {
+            const price = await lookupSinglePrice({
+              serviceName: parsed.serviceName,
+              sku: parsed.sku,
+              os: parsed.os,
+              tier: parsed.tier,
+              region,
+              currency,
+            });
+
+            const unitCost = price || 0;
+            const totalCost = unitCost * parsed.quantity;
+            const noteParts = [];
+            if (parsed.os) noteParts.push(parsed.os);
+            if (parsed.tier) noteParts.push(parsed.tier);
+
+            items.push({
+              service: parsed.serviceName,
+              sku: parsed.sku,
+              quantity: parsed.quantity,
+              unitCost,
+              monthlyCost: totalCost,
+              notes: noteParts.join(', '),
+            });
+          } catch (_) {
+            items.push({
+              service: parsed.serviceName,
+              sku: parsed.sku,
+              quantity: parsed.quantity,
+              unitCost: 0,
+              monthlyCost: 0,
+              notes: 'price lookup failed',
+            });
+          }
+        }
+
+        spinner.stop(`Priced ${items.length} resource(s)`);
+
+        // Show result
+        outputEstimate(items, region, currency, opts);
+
+        // Offer to continue interactively
+        const goInteractive = await confirm({
+          message: 'Add more resources interactively?',
+          default: false,
+        });
+        if (!goInteractive) {
+          await saveAndExport(items, region, currency, opts, mru);
+          return;
         }
       }
 
@@ -527,11 +454,6 @@ module.exports = function registerPlanCommand(program) {
       logger.header('Azure Cost Estimate Builder');
       logger.dim(`Region: ${region} | Currency: ${currency}`);
       logger.spacer();
-
-      // Print existing items if we loaded from a file
-      if (items.length > 0) {
-        printRunningTotal(items, currency);
-      }
 
       // ── Quick-start templates ──────────────────────────────────
       if (opts.quick) {
@@ -565,7 +487,8 @@ module.exports = function registerPlanCommand(program) {
               });
 
               const qty = res.instances || 1;
-              const monthlyCost = price ? price * qty : 0;
+              const unitCost = price || 0;
+              const monthlyCost = unitCost * qty;
               const noteParts = [];
               if (res.tier) noteParts.push(res.tier);
               if (res.os) noteParts.push(res.os);
@@ -574,50 +497,65 @@ module.exports = function registerPlanCommand(program) {
               items.push({
                 service: res.service,
                 sku: res.sku,
+                quantity: qty,
+                unitCost,
                 monthlyCost,
                 notes: noteParts.join(', '),
               });
             } catch (_) {
-              items.push({ service: res.service, sku: res.sku, monthlyCost: 0, notes: 'price lookup failed' });
+              items.push({
+                service: res.service,
+                sku: res.sku,
+                quantity: 1,
+                unitCost: 0,
+                monthlyCost: 0,
+                notes: 'price lookup failed',
+              });
             }
           }
 
           spinner.stop(`Loaded ${template.name} template`);
-          printRunningTotal(items, currency);
         }
       }
 
-      // ── Price cache for inline preview — avoids re-fetching for the same service
+      // ── Price cache for inline preview
       const priceCache = {};
 
-      // ── Main loop: add resources until user is done ─────────────
-      let addMore = true;
-      while (addMore) {
-        // Pick a service type with grouped, categorised display
-        const serviceChoices = buildServiceChoices(mru);
+      // ── Main loop: continuous flow with Done/Edit at top ────────
+      while (true) {
+        const serviceChoices = buildServiceChoices(mru, items, currency);
         const serviceIdx = await select({
           message: 'Add a resource:',
           choices: serviceChoices,
           theme: NUMBERED_THEME,
         });
 
-        const service = SERVICE_CATALOG[serviceIdx];
+        // "Done" selected
+        if (serviceIdx === -2) break;
 
-        // Collect configuration for this resource
+        // "Edit" selected
+        if (serviceIdx === -3) {
+          await editEstimate(items, currency, select, number);
+          continue;
+        }
+
+        const service = SERVICE_CATALOG[serviceIdx];
         const answers = {};
 
         // ── Two-step family picker for VMs and PostgreSQL ──────
         if (service.useFamilyPicker) {
-          answers.sku = await familyPicker(service.useFamilyPicker, select, input, mru);
+          answers.sku = await familyPicker(service.useFamilyPicker, select, input, mru, {
+            region,
+            currency,
+            serviceName: service.serviceName,
+            os: undefined, // OS not known yet for VMs
+          });
         }
 
         // ── Standard prompts (OS, instances, etc.) ─────────────
-        // For services with static choices and inline prices, we pre-fetch
-        // prices and enrich the choice labels before showing them.
         for (const prompt of service.prompts) {
           if (prompt.choices) {
             let choices;
-            // Try to enrich with inline prices for the SKU prompt
             if (prompt.key === 'sku' && !service.useFamilyPicker) {
               const cacheKey = `${service.serviceName}|${region}|${answers.os || ''}|${answers.tier || ''}`;
               if (priceCache[cacheKey]) {
@@ -657,12 +595,12 @@ module.exports = function registerPlanCommand(program) {
           }
         }
 
-        // Look up the price for this configuration
+        // Look up the price
         const spinner = createSpinner(`Fetching price for ${service.name} ${answers.sku}...`);
         spinner.start();
 
         try {
-          const monthlyCost = await lookupSinglePrice({
+          const unitCost = await lookupSinglePrice({
             serviceName: service.serviceName,
             sku: answers.sku,
             os: answers.os,
@@ -671,13 +609,24 @@ module.exports = function registerPlanCommand(program) {
             currency,
           });
 
-          if (monthlyCost === null) {
+          if (unitCost === null) {
             spinner.fail(`No price found for ${service.name} ${answers.sku}`);
           } else {
-            // Apply instance/quantity multiplier
-            const qty = answers.instances || 1;
-            const totalCost = monthlyCost * qty;
+            // Apply instance multiplier (scaling within a single resource)
+            const instances = answers.instances || 1;
+            const perUnit = unitCost * instances;
 
+            spinner.stop(`${service.name} ${answers.sku} — ${formatMoney(perUnit, currency)}/mo each`);
+
+            // Quantity prompt: how many of this resource?
+            const qty = await number({
+              message: 'How many of this resource?',
+              default: 1,
+              min: 1,
+              max: 100,
+            });
+
+            const totalCost = perUnit * qty;
             const noteParts = [];
             if (answers.tier) noteParts.push(answers.tier);
             if (answers.os) noteParts.push(answers.os);
@@ -686,17 +635,23 @@ module.exports = function registerPlanCommand(program) {
             items.push({
               service: service.name,
               sku: answers.sku,
+              quantity: qty,
+              unitCost: perUnit,
               monthlyCost: totalCost,
               notes: noteParts.join(', '),
             });
 
-            spinner.stop(`${service.name} ${answers.sku}: ${formatMoney(totalCost, currency)}/month`);
+            if (qty > 1) {
+              logger.success(`Added ${qty}× ${service.name} ${answers.sku} — ${formatMoney(totalCost, currency)}/mo (${formatMoney(perUnit, currency)} each)`);
+            } else {
+              logger.success(`Added: ${service.name} ${answers.sku} — ${formatMoney(totalCost, currency)}/mo`);
+            }
 
             // ── Cheaper AMD alternative nudge for VMs and PostgreSQL ──
             if (service.useFamilyPicker && answers.sku.startsWith('Standard_')) {
               const cheaper = await offerCheaperAlternative({
                 sku: answers.sku,
-                currentPrice: totalCost,
+                currentPrice: perUnit,
                 os: answers.os,
                 region,
                 currency,
@@ -704,14 +659,15 @@ module.exports = function registerPlanCommand(program) {
                 confirm,
               });
               if (cheaper) {
-                // Replace the last item with the cheaper alternative
-                items[items.length - 1].sku = cheaper.sku;
-                items[items.length - 1].monthlyCost = cheaper.monthlyCost;
-                logger.success(`Switched to ${cheaper.sku}: ${formatMoney(cheaper.monthlyCost, currency)}/month`);
+                const last = items[items.length - 1];
+                last.sku = cheaper.sku;
+                last.unitCost = cheaper.monthlyCost;
+                last.monthlyCost = cheaper.monthlyCost * qty;
+                logger.success(`Switched to ${cheaper.sku} — ${formatMoney(last.monthlyCost, currency)}/mo`);
               }
             }
 
-            // ── "You might also need" companion prompt ────────────
+            // ── Companion prompt ────────────
             if (service.companion) {
               const addCompanion = await confirm({
                 message: service.companion.message,
@@ -723,12 +679,13 @@ module.exports = function registerPlanCommand(program) {
                   items.push({
                     service: comp.service,
                     sku: comp.defaults.sku,
+                    quantity: 1,
+                    unitCost: 0,
                     monthlyCost: 0,
                     notes: 'usage-based',
                   });
                   logger.success(`Added ${comp.service} (usage-based)`);
                 } else {
-                  // Look up the companion's price
                   try {
                     const compPrice = await lookupSinglePrice({
                       serviceName: comp.service === 'Managed Disks' ? 'Managed Disks' : comp.service,
@@ -739,14 +696,18 @@ module.exports = function registerPlanCommand(program) {
                     items.push({
                       service: comp.service,
                       sku: comp.defaults.sku,
+                      quantity: 1,
+                      unitCost: compPrice || 0,
                       monthlyCost: compPrice || 0,
                       notes: comp.defaults.notes || '',
                     });
-                    logger.success(`Added ${comp.service} ${comp.defaults.sku}: ${formatMoney(compPrice || 0, currency)}/month`);
+                    logger.success(`Added ${comp.service} ${comp.defaults.sku} — ${formatMoney(compPrice || 0, currency)}/mo`);
                   } catch (_) {
                     items.push({
                       service: comp.service,
                       sku: comp.defaults.sku,
+                      quantity: 1,
+                      unitCost: 0,
                       monthlyCost: 0,
                       notes: 'price not found',
                     });
@@ -758,14 +719,6 @@ module.exports = function registerPlanCommand(program) {
         } catch (err) {
           spinner.fail(`Price lookup failed: ${err.message}`);
         }
-
-        // Show running total
-        if (items.length > 0) {
-          printRunningTotal(items, currency);
-        }
-
-        // Ask to continue
-        addMore = await confirm({ message: 'Add another resource?', default: true });
       }
 
       // ── Final output ────────────────────────────────────────────
@@ -774,92 +727,98 @@ module.exports = function registerPlanCommand(program) {
         return;
       }
 
-      logger.spacer();
-      logger.header('Final Estimate');
-
-      // Build the output as priced resources for the table renderer
-      const pricedResources = items.map((item) => ({
-        name: item.service,
-        type: item.service,
-        sku: item.sku,
-        monthlyCost: item.monthlyCost,
-        notes: item.notes,
-      }));
-
-      if (opts.format === 'json') {
-        const result = buildPlanJson({ region, currency, items });
-        logger.raw(JSON.stringify(result, null, 2) + '\n');
-      } else {
-        renderScanResult({
-          subscription: 'Estimate',
-          region,
-          currency,
-          resources: pricedResources,
-          unsupported: [],
-          unpriced: [],
-        });
-      }
-
-      // ── Save estimate ───────────────────────────────────────────
-      const dateStr = new Date().toISOString().split('T')[0];
-      const estimateFile = path.join(ESTIMATES_DIR, `estimate-${dateStr}-${Date.now()}.json`);
-
-      if (!fs.existsSync(ESTIMATES_DIR)) {
-        fs.mkdirSync(ESTIMATES_DIR, { recursive: true });
-      }
-
-      const estimateData = buildPlanJson({ region, currency, items });
-      fs.writeFileSync(estimateFile, JSON.stringify(estimateData, null, 2), 'utf8');
-      logger.success(`Estimate saved to ${estimateFile}`);
-
-      // ── Save MRU data ───────────────────────────────────────────
-      mru.lastRegion = region;
-      mru.lastServices = [...new Set(items.map((i) => i.service))];
-      // Remember last VM and PG SKUs if used
-      const lastVm = items.find((i) => i.service === 'Virtual Machine');
-      if (lastVm) mru.lastVmSku = lastVm.sku;
-      const lastPg = items.find((i) => i.service === 'PostgreSQL Flexible Server');
-      if (lastPg) mru.lastPgSku = lastPg.sku;
-      saveMru(mru);
-
-      // ── Contextual tip for large estimates ──────────────────────
-      if (items.length > 3) {
-        logger.spacer();
-        logger.dim(`Tip: azc plan --load ${estimateFile} to reload and modify this estimate`);
-      }
-
-      // ── File export if requested ────────────────────────────────
-      if (opts.out) {
-        const ext = path.extname(opts.out).toLowerCase();
-        if (ext === '.json') {
-          fs.writeFileSync(opts.out, JSON.stringify(estimateData, null, 2), 'utf8');
-          logger.success(`Exported to ${opts.out}`);
-        } else if (ext === '.xlsx') {
-          await exportToXlsx({
-            filePath: opts.out,
-            subscription: 'Estimate',
-            region,
-            currency,
-            resources: pricedResources,
-            unsupported: [],
-            unpriced: [],
-          });
-        } else {
-          logger.warn(`Unsupported file extension: ${ext}. Use .json or .xlsx.`);
-        }
-      }
+      outputEstimate(items, region, currency, opts);
+      await saveAndExport(items, region, currency, opts, mru);
     });
 };
 
 /**
- * Print a compact running total: resource count + monthly + annual on one line.
+ * Display the final estimate table or JSON output.
  */
-function printRunningTotal(items, currency) {
-  const total = items.reduce((sum, i) => sum + i.monthlyCost, 0);
-  const count = items.length;
+function outputEstimate(items, region, currency, opts) {
   logger.spacer();
-  logger.dim('─'.repeat(45));
-  logger.info(`${count} resource${count !== 1 ? 's' : ''} | ${formatMoney(total, currency)}/mo | ${formatMoney(monthlyToAnnual(total), currency)}/yr`);
-  logger.dim('─'.repeat(45));
-  logger.spacer();
+  logger.header('Final Estimate');
+
+  const pricedResources = items.map((item) => ({
+    name: item.quantity > 1 ? `${item.quantity}× ${item.service}` : item.service,
+    type: item.service,
+    sku: item.sku,
+    monthlyCost: item.monthlyCost,
+    notes: item.notes,
+  }));
+
+  if (opts.format === 'json') {
+    const result = buildPlanJson({ region, currency, items });
+    logger.raw(JSON.stringify(result, null, 2) + '\n');
+  } else {
+    renderScanResult({
+      subscription: 'Estimate',
+      region,
+      currency,
+      resources: pricedResources,
+      unsupported: [],
+      unpriced: [],
+    });
+  }
+}
+
+/**
+ * Save the estimate to disk, update MRU, and export if requested.
+ */
+async function saveAndExport(items, region, currency, opts, mru) {
+  // ── Save estimate ───────────────────────────────────────────
+  const dateStr = new Date().toISOString().split('T')[0];
+  const estimateFile = path.join(ESTIMATES_DIR, `estimate-${dateStr}-${Date.now()}.json`);
+
+  if (!fs.existsSync(ESTIMATES_DIR)) {
+    fs.mkdirSync(ESTIMATES_DIR, { recursive: true });
+  }
+
+  const estimateData = buildPlanJson({ region, currency, items });
+  fs.writeFileSync(estimateFile, JSON.stringify(estimateData, null, 2), 'utf8');
+  logger.success(`Estimate saved to ${estimateFile}`);
+
+  // ── Save MRU data ───────────────────────────────────────────
+  mru.lastRegion = region;
+  mru.lastServices = [...new Set(items.map((i) => i.service))];
+  const lastVm = items.find((i) => i.service === 'Virtual Machine');
+  if (lastVm) mru.lastVmSku = lastVm.sku;
+  const lastPg = items.find((i) => i.service === 'PostgreSQL Flexible Server');
+  if (lastPg) mru.lastPgSku = lastPg.sku;
+  saveMru(mru);
+
+  // ── Contextual tip ──────────────────────────────────────────
+  if (items.length > 1) {
+    logger.spacer();
+    logger.dim(`Tip: azc plan --load ${estimateFile} to reload and modify`);
+  }
+
+  // ── File export if requested ────────────────────────────────
+  if (opts.out) {
+    const pricedResources = items.map((item) => ({
+      name: item.quantity > 1 ? `${item.quantity}× ${item.service}` : item.service,
+      type: item.service,
+      sku: item.sku,
+      monthlyCost: item.monthlyCost,
+      notes: item.notes,
+    }));
+
+    const ext = path.extname(opts.out).toLowerCase();
+    if (ext === '.json') {
+      fs.writeFileSync(opts.out, JSON.stringify(estimateData, null, 2), 'utf8');
+      logger.success(`Exported to ${opts.out}`);
+    } else if (ext === '.xlsx') {
+      await exportToXlsx({
+        filePath: opts.out,
+        subscription: 'Estimate',
+        region,
+        currency,
+        resources: pricedResources,
+        unsupported: [],
+        unpriced: [],
+      });
+    } else {
+      logger.warn(`Unsupported file extension: ${ext}. Use .json or .xlsx.`);
+    }
+  }
 }

@@ -67,6 +67,81 @@ describe('formatCompact', () => {
   });
 });
 
+// ── parseInlineResource ─────────────────────────────────────────────
+
+const { parseInlineResource } = require('../src/utils/sku-picker');
+
+describe('parseInlineResource', () => {
+  it('should parse "App Service P1v3" into service and SKU', () => {
+    const result = parseInlineResource('App Service P1v3');
+    assert.ok(result);
+    assert.equal(result.sku, 'P1v3');
+    assert.equal(result.quantity, 1);
+  });
+
+  it('should parse "3x App Service P1v3 linux" with quantity and OS', () => {
+    const result = parseInlineResource('3x App Service P1v3 linux');
+    assert.ok(result);
+    assert.equal(result.quantity, 3);
+    assert.equal(result.sku, 'P1v3');
+    assert.equal(result.os, 'linux');
+  });
+
+  it('should parse "PostgreSQL D2ds_v5" without quantity prefix', () => {
+    const result = parseInlineResource('PostgreSQL D2ds_v5');
+    assert.ok(result);
+    assert.equal(result.sku, 'D2ds_v5');
+    assert.equal(result.quantity, 1);
+  });
+
+  it('should parse "2x Redis C1 standard" with tier hint', () => {
+    const result = parseInlineResource('2x Redis C1 standard');
+    assert.ok(result);
+    assert.equal(result.quantity, 2);
+    assert.equal(result.sku, 'C1');
+    assert.equal(result.tier, 'standard');
+  });
+
+  it('should return null for unrecognised service', () => {
+    const result = parseInlineResource('FooBar XYZ');
+    assert.equal(result, null);
+  });
+});
+
+// ── Quantity in plan items ──────────────────────────────────────────
+
+describe('quantity calculations', () => {
+  it('should correctly multiply unitCost by quantity', () => {
+    const unitCost = 109.50;
+    const qty = 3;
+    const total = unitCost * qty;
+    assert.equal(total, 328.5);
+  });
+
+  it('should include quantity and unitCost in plan JSON output', () => {
+    const { buildPlanJson } = require('../src/formatters/json');
+    const result = buildPlanJson({
+      region: 'uksouth',
+      currency: 'GBP',
+      items: [
+        { service: 'App Service Plan', sku: 'P1v3', quantity: 3, unitCost: 109.50, monthlyCost: 328.50, notes: '' },
+      ],
+    });
+    assert.equal(result.items[0].quantity, 3);
+    assert.equal(result.items[0].unitCost, 109.50);
+    assert.equal(result.items[0].monthlyCost, 328.50);
+  });
+});
+
+// ── Scan grouping ──────────────────────────────────────────────────
+
+describe('renderScanResultGrouped', () => {
+  it('should export the grouped renderer function', () => {
+    const { renderScanResultGrouped } = require('../src/formatters/table');
+    assert.equal(typeof renderScanResultGrouped, 'function');
+  });
+});
+
 // ── Data files ──────────────────────────────────────────────────────
 
 describe('vm-skus.json', () => {
