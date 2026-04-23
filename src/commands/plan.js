@@ -17,6 +17,10 @@ const { createSpinner } = require('../utils/spinner');
 const { formatMoney, formatCompact, hourlyToMonthly, monthlyToAnnual } = require('../utils/currency');
 const { ESTIMATES_DIR, AZC_HOME } = require('../config/config');
 
+// Show numbered indices on all select prompts so users can type a number
+// to jump directly to an option (works alongside arrow key navigation)
+const NUMBERED_THEME = { indexMode: 'number' };
+
 // Load VM and PostgreSQL SKU data files for the family → size picker
 const vmSkus = require(path.join(__dirname, '../../data/vm-skus.json'));
 const pgSkus = require(path.join(__dirname, '../../data/pg-skus.json'));
@@ -210,6 +214,7 @@ async function familyPicker(type, select, input, mru) {
     message: type === 'vm' ? 'Pick a VM family:' : 'Pick a PostgreSQL tier:',
     choices: familyChoices,
     default: defaultFamily,
+    theme: NUMBERED_THEME,
   });
 
   // Escape hatch — free-text input for custom SKUs
@@ -236,6 +241,7 @@ async function familyPicker(type, select, input, mru) {
     message: 'Pick a size:',
     choices: sizeChoices,
     default: lastSku && family.skus.some((s) => s.sku === lastSku) ? lastSku : undefined,
+    theme: NUMBERED_THEME,
   });
 
   return selectedSku;
@@ -513,6 +519,7 @@ module.exports = function registerPlanCommand(program) {
           message: 'Select Azure region:',
           choices: regionChoices,
           default: defaultRegion,
+          theme: NUMBERED_THEME,
         });
       }
 
@@ -538,6 +545,7 @@ module.exports = function registerPlanCommand(program) {
         const templateIdx = await select({
           message: 'Quick start template:',
           choices: templateChoices,
+          theme: NUMBERED_THEME,
         });
 
         if (templateIdx >= 0) {
@@ -590,6 +598,7 @@ module.exports = function registerPlanCommand(program) {
         const serviceIdx = await select({
           message: 'Add a resource:',
           choices: serviceChoices,
+          theme: NUMBERED_THEME,
         });
 
         const service = SERVICE_CATALOG[serviceIdx];
@@ -632,6 +641,7 @@ module.exports = function registerPlanCommand(program) {
               message: prompt.message,
               choices,
               default: prompt.default,
+              theme: NUMBERED_THEME,
             });
           } else if (prompt.type === 'number') {
             answers[prompt.key] = await number({

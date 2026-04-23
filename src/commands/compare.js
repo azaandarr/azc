@@ -266,6 +266,7 @@ async function interactiveCompare(resources, opts, subscriptionId) {
   const selectedIdx = await select({
     message: 'Which resource do you want to re-spec?',
     choices: resourceChoices,
+    theme: { indexMode: 'number' },
   });
 
   const selected = pricedResources[selectedIdx];
