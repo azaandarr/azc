@@ -2,14 +2,17 @@
 
 Fast, terminal-native Azure infrastructure cost estimation. Replaces the Azure Pricing Calculator for engineers who live in the terminal.
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Node.js 20+](https://img.shields.io/badge/node-20%2B-brightgreen.svg)](https://nodejs.org/)
+
 ## Install
 
 ```bash
-# From the internal npm registry
-npm install -g @internal/azc
+# From npm
+npm install -g azc
 
-# Or link locally for development
-git clone <repo-url> && cd azc
+# Or clone and link for development
+git clone https://github.com/azaandarr/azc.git && cd azc
 npm install
 npm link
 ```
@@ -172,6 +175,10 @@ npm link          # Link CLI globally for local testing
 npm run lint      # Lint with standard
 ```
 
+## Contributing
+
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions, code style, and how to add support for new Azure resource types.
+
 ## License
 
-UNLICENSED — internal use only.
+[MIT](LICENSE)

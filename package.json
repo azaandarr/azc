@@ -1,7 +1,7 @@
 {
-  "name": "@internal/azc",
+  "name": "azc",
   "version": "0.1.0",
-  "description": "Azure Costing CLI — terminal-native Azure infrastructure cost estimator",
+  "description": "Azure Costing CLI — fast, terminal-native Azure infrastructure cost estimation. Replaces the Azure Pricing Calculator for engineers who live in the terminal.",
   "main": "bin/azc.js",
   "bin": {
     "azc": "./bin/azc.js"
@@ -16,14 +16,33 @@
     "cost",
     "pricing",
     "cli",
-    "infrastructure"
+    "infrastructure",
+    "cloud",
+    "devops",
+    "finops",
+    "azure-pricing",
+    "cost-estimation"
   ],
-  "author": "Sca",
-  "license": "UNLICENSED",
-  "private": true,
+  "author": "Azaan Darr (https://github.com/azaandarr)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/azaandarr/azc.git"
+  },
+  "bugs": {
+    "url": "https://github.com/azaandarr/azc/issues"
+  },
+  "homepage": "https://github.com/azaandarr/azc#readme",
   "engines": {
     "node": ">=20.0.0"
   },
+  "files": [
+    "bin/",
+    "src/",
+    "data/",
+    "LICENSE",
+    "README.md"
+  ],
   "dependencies": {
     "@azure/arm-resourcegraph": "^4.2.1",
     "@azure/identity": "^4.5.0",
