@@ -250,6 +250,14 @@ module.exports = function registerCompareCommand(program) {
           if (osFiltered.length > 0) matched = osFiltered;
         }
 
+        // Filter out Spot and Low Priority SKUs — we want regular consumption pricing
+        matched = matched.filter((item) => {
+          const meter = (item.meterName || '').toLowerCase();
+          const sku = (item.skuName || '').toLowerCase();
+          return !meter.includes('spot') && !meter.includes('low priority') &&
+                 !sku.includes('spot') && !sku.includes('low priority');
+        });
+
         if (matched.length === 0) {
           throw new Error(`No price found for SKU "${change.newSku}" in ${currentDescriptor.serviceName}`);
         }

@@ -279,6 +279,14 @@ function matchAndCalculate(items, descriptor) {
     if (osFiltered.length > 0) matched = osFiltered;
   }
 
+  // Filter out Spot and Low Priority SKUs — we want regular consumption pricing
+  matched = matched.filter((item) => {
+    const meter = (item.meterName || '').toLowerCase();
+    const sku = (item.skuName || '').toLowerCase();
+    return !meter.includes('spot') && !meter.includes('low priority') &&
+           !sku.includes('spot') && !sku.includes('low priority');
+  });
+
   // Prefer Consumption items over Reservation
   const consumptionItems = matched.filter((i) => i.type === 'Consumption');
   if (consumptionItems.length > 0) matched = consumptionItems;

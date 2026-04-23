@@ -233,6 +233,14 @@ module.exports = function registerPlanCommand(program) {
             if (mfFiltered.length > 0) matched = mfFiltered;
           }
 
+          // Filter out Spot and Low Priority SKUs — we want regular consumption pricing
+          matched = matched.filter((item) => {
+            const meter = (item.meterName || '').toLowerCase();
+            const sku = (item.skuName || '').toLowerCase();
+            return !meter.includes('spot') && !meter.includes('low priority') &&
+                   !sku.includes('spot') && !sku.includes('low priority');
+          });
+
           if (matched.length === 0) {
             spinner.fail(`No price found for ${service.name} ${answers.sku}`);
           } else {
