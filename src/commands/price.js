@@ -217,6 +217,16 @@ module.exports = function registerPriceCommand(program) {
           if (osFiltered.length > 0) filtered = osFiltered;
         }
 
+        // Filter out Spot and Low Priority SKUs — these are not relevant
+        // for standard price lookups. They use variable/auction pricing
+        // that isn't useful for cost estimation.
+        filtered = filtered.filter((item) => {
+          const skuName = (item.skuName || '').toLowerCase();
+          const meterName = (item.meterName || '').toLowerCase();
+          return !skuName.includes('spot') && !skuName.includes('low priority') &&
+                 !meterName.includes('spot') && !meterName.includes('low priority');
+        });
+
         spinner.stop(`Found ${filtered.length} price entries`);
 
         // If no specific SKU was given, show a service overview table instead

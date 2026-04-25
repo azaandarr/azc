@@ -37,10 +37,40 @@ function renderPriceLookup({ query, region, currency, items }) {
     return;
   }
 
-  // Group items by pricing type — we want to show consumption alongside reservations
-  const consumption = items.filter((i) => i.type === 'Consumption');
-  const reserved1yr = items.filter((i) => i.type === 'Reservation' && i.reservationTerm === '1 Year');
-  const reserved3yr = items.filter((i) => i.type === 'Reservation' && i.reservationTerm === '3 Years');
+  // Filter consumption items: exclude Spot and Low Priority variants.
+  // These have wildly different (usually much lower) prices and aren't
+  // useful for standard cost estimation. They also cause RI matching
+  // to produce nonsensical savings percentages.
+  const consumption = items.filter((i) => {
+    if (i.type !== 'Consumption') return false;
+    const skuName = (i.skuName || '').toLowerCase();
+    const meterName = (i.meterName || '').toLowerCase();
+    return !skuName.includes('spot') && !skuName.includes('low priority') &&
+           !meterName.includes('spot') && !meterName.includes('low priority');
+  });
+
+  const reserved1yr = items.filter((i) => {
+    if (i.type !== 'Reservation' || i.reservationTerm !== '1 Year') return false;
+    const skuName = (i.skuName || '').toLowerCase();
+    return !skuName.includes('spot') && !skuName.includes('low priority');
+  });
+
+  const reserved3yr = items.filter((i) => {
+    if (i.type !== 'Reservation' || i.reservationTerm !== '3 Years') return false;
+    const skuName = (i.skuName || '').toLowerCase();
+    return !skuName.includes('spot') && !skuName.includes('low priority');
+  });
+
+  // Deduplicate consumption items — the API sometimes returns multiple entries
+  // for the same logical SKU (different meter subcategories). Keep the first
+  // (usually the primary compute cost).
+  const seen = new Set();
+  const uniqueConsumption = consumption.filter((item) => {
+    const key = `${item.productName || ''}|${item.armSkuName || item.skuName || ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 
   // Build the table — one row per distinct meter/SKU combination
   const table = new Table({
@@ -58,8 +88,7 @@ function renderPriceLookup({ query, region, currency, items }) {
   });
 
   // For each consumption item, try to find matching reservation prices
-  // by matching on the meterName or skuName
-  for (const item of consumption) {
+  for (const item of uniqueConsumption) {
     const unitRate = item.retailPrice;
     const unit = item.unitOfMeasure || '';
 
@@ -82,7 +111,7 @@ function renderPriceLookup({ query, region, currency, items }) {
       : chalk.dim('—');
 
     table.push([
-      chalk.blue(item.skuName || item.armSkuName || ''),
+      chalk.blue(formatSkuWithContext(item)),
       chalk.white(item.meterName || ''),
       chalk.dim(unit),
       chalk.green(formatMoney(unitRate, currency)),
@@ -94,7 +123,7 @@ function renderPriceLookup({ query, region, currency, items }) {
 
   // If there were no consumption items but there were reservation items,
   // show those instead (some services only have reservation pricing)
-  if (consumption.length === 0 && (reserved1yr.length > 0 || reserved3yr.length > 0)) {
+  if (uniqueConsumption.length === 0 && (reserved1yr.length > 0 || reserved3yr.length > 0)) {
     const allReserved = [...reserved1yr, ...reserved3yr];
     for (const item of allReserved) {
       table.push([
@@ -111,7 +140,7 @@ function renderPriceLookup({ query, region, currency, items }) {
 
   logger.raw(table.toString() + '\n');
   logger.spacer();
-  logger.dim(`${items.length} price entries found`);
+  logger.dim(`${uniqueConsumption.length} price entries found`);
 }
 
 /**
@@ -412,19 +441,72 @@ function estimateMonthly(unitRate, unit) {
 
 /**
  * Check if a reservation price item matches a consumption price item.
- * We match on productName since that's consistent across pricing types
- * for the same resource.
+ * Must match on BOTH productName AND armSkuName to avoid cross-matching
+ * between Linux/Windows or between different SKU variants that share
+ * a product family.
  *
  * @param {object} consumption - Consumption price item
  * @param {object} reservation - Reservation price item
  * @returns {boolean}
  */
 function matchesReservation(consumption, reservation) {
-  if (consumption.productName && reservation.productName) {
-    return consumption.productName === reservation.productName;
+  // Primary match: same product AND same ARM SKU.
+  // productName distinguishes Linux vs Windows (e.g.
+  // "Virtual Machines DSv5 Series" vs "Virtual Machines DSv5 Series Windows")
+  // armSkuName distinguishes specific sizes (e.g. Standard_D4s_v5 vs Standard_D8s_v5)
+  if (consumption.productName && reservation.productName &&
+      consumption.armSkuName && reservation.armSkuName) {
+    return consumption.productName === reservation.productName &&
+           consumption.armSkuName === reservation.armSkuName;
   }
-  // Fallback: match on armSkuName
-  return consumption.armSkuName === reservation.armSkuName;
+
+  // Fallback: for services where armSkuName is empty (App Service, etc.),
+  // match on productName + meterName similarity.
+  if (consumption.productName && reservation.productName) {
+    if (consumption.productName !== reservation.productName) return false;
+    // If both have armSkuName, they must match
+    if (consumption.armSkuName && reservation.armSkuName) {
+      return consumption.armSkuName === reservation.armSkuName;
+    }
+    // If armSkuName is missing on both sides, match on skuName
+    if (consumption.skuName && reservation.skuName) {
+      return consumption.skuName.toLowerCase().replace(/\s+/g, '') ===
+             reservation.skuName.toLowerCase().replace(/\s+/g, '');
+    }
+    // Last resort: productName alone (least precise)
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Format a SKU name with OS/product context when needed to disambiguate.
+ * Detects Linux/Windows from the productName field and appends it.
+ * E.g. "Standard_D4s_v5" → "Standard_D4s_v5 (Linux)"
+ *
+ * Only adds context for services where OS matters (VMs, App Service).
+ * For other services, returns the plain SKU name.
+ *
+ * @param {object} item - Price item from the Retail Prices API
+ * @returns {string} SKU name, possibly with OS suffix
+ */
+function formatSkuWithContext(item) {
+  const sku = item.skuName || item.armSkuName || '';
+  const product = (item.productName || '').toLowerCase();
+
+  // Detect OS for VMs and App Service
+  if (product.includes('virtual machines') || product.includes('app service')) {
+    if (product.includes('windows')) return `${sku} (Windows)`;
+    if (product.includes('linux')) return `${sku} (Linux)`;
+    // Some VM products don't say "Linux" explicitly — if it doesn't say
+    // "Windows", it's Linux by default in Azure's naming convention.
+    if (product.includes('virtual machines') && !product.includes('windows')) {
+      return `${sku} (Linux)`;
+    }
+  }
+
+  return sku;
 }
 
 /**
